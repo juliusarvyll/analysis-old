@@ -70,17 +70,59 @@ def generate_association_rules(binary_df, min_support=0.05):
     - rules (DataFrame): Generated association rules.
     """
     try:
-        frequent_itemsets = apriori(binary_df, min_support=min_support, use_colnames=True)
+        # Generate frequent itemsets with debug logging
+        logging.debug(f"Generating frequent itemsets with min_support={min_support}")
+        frequent_itemsets = apriori(binary_df, 
+                                  min_support=min_support, 
+                                  use_colnames=True,
+                                  max_len=None)  # Allow any length itemsets
         
-        if frequent_itemsets.empty:
+        if frequent_itemsets is None or frequent_itemsets.empty:
+            logging.warning("No frequent itemsets found with current support threshold")
+            return pd.DataFrame()
+            
+        logging.debug(f"Found {len(frequent_itemsets)} frequent itemsets")
+        
+        # Ensure frequent_itemsets has the required format
+        if 'support' not in frequent_itemsets.columns:
+            logging.error("Frequent itemsets missing 'support' column")
+            return pd.DataFrame()
+            
+        if 'itemsets' not in frequent_itemsets.columns:
+            logging.error("Frequent itemsets missing 'itemsets' column")
             return pd.DataFrame()
         
-        rules = association_rules(frequent_itemsets, metric="confidence", min_threshold=0.1)
+        # Generate rules with minimum confidence of 0.1
+        try:
+            rules = association_rules(frequent_itemsets, 
+                                    metric="confidence",
+                                    min_threshold=0.1)
+        except TypeError as te:
+            logging.error(f"TypeError in association_rules: {te}")
+            # Try alternative format if needed
+            rules = association_rules(frequent_itemsets, 
+                                    metric="confidence",
+                                    min_threshold=0.1,
+                                    support_only=True)
+        
+        if rules.empty:
+            logging.warning("No rules generated with current thresholds")
+            return pd.DataFrame()
+        
+        # Ensure rules have required columns
+        required_columns = ['antecedents', 'consequents', 'support', 'confidence', 'lift']
+        if not all(col in rules.columns for col in required_columns):
+            logging.error(f"Rules missing required columns. Found: {rules.columns.tolist()}")
+            return pd.DataFrame()
+        
+        # Sort rules by lift for most interesting relationships first
         rules = rules.sort_values('lift', ascending=False)
         
+        logging.debug(f"Generated {len(rules)} association rules")
         return rules
+        
     except Exception as e:
-        print(f"Error generating rules: {e}")
+        logging.error(f"Error generating rules: {str(e)}")
         return pd.DataFrame()
 
 def generate_recommendations_from_rules(self, rules, df, min_lift=1.5, max_recommendations=10):
@@ -1411,17 +1453,12 @@ class AnalysisGUI:
                     df, low_threshold, high_threshold
                 )
                 
-                # Generate association rules
+                # Generate association rules and plot them
                 binary_df = prepare_for_association_rules(df, self.selected_features)
                 rules = generate_association_rules(binary_df)
+                self.plot_association_rules(rules, year)  # Make sure this line is present
                 
-                # Display association rules interpretation
-                self.output_text.insert(tk.END, "\nAssociation Rules Analysis:\n")
-                self.output_text.insert(tk.END, "==========================\n")
-                interpretation = interpret_event_association_rules(rules)
-                self.output_text.insert(tk.END, interpretation + "\n")
-                
-                # Display results
+                # Display results (without association rules text)
                 self.output_text.insert(tk.END, "Average Event Ratings by Category:\n")
                 self.output_text.insert(tk.END, str(avg_scores) + "\n\n")
                 
@@ -1472,9 +1509,6 @@ class AnalysisGUI:
                 if not high_scores.empty:
                     self.output_text.insert(tk.END, "\nHigh Performing Areas:\n")
                     self.output_text.insert(tk.END, str(high_scores) + "\n\n")
-                
-                # Create visualization for association rules for the current year
-                self.plot_association_rules(rules, str(year))
                 
                 # Separate analyses by lines
                 self.output_text.insert(tk.END, "\n" + "="*50 + "\n\n")
@@ -1586,8 +1620,34 @@ class AnalysisGUI:
             # Plot overall trend
             self.plot_clustering_trends(trend_data)
             
+            # Calculate baseline metrics
+            baseline_metrics = self.calculate_baseline_performance(self.datasets)
+            
+            # Compare current performance against baseline
+            current_year = max(self.datasets.keys())
+            current_data = self.datasets[current_year]
+            comparison_results = self.compare_against_baseline(current_data, baseline_metrics)
+            
+            # Add baseline comparison to output
+            self.output_text.insert(tk.END, "\n=== Baseline Performance Comparison ===\n")
+            for feature, results in comparison_results.items():
+                self.output_text.insert(tk.END, f"\n{feature}:\n")
+                self.output_text.insert(tk.END, f"• Performance: {results['performance']}\n")
+                self.output_text.insert(tk.END, f"• Change from baseline: {results['pct_change']:+.1f}%\n")
+                
+                # Add specific insights based on performance
+                if results['performance'] == 'Significant Improvement':
+                    self.output_text.insert(tk.END, "• Successfully exceeded baseline expectations\n")
+                    self.output_text.insert(tk.END, "• Document and share successful strategies\n")
+                elif results['performance'] == 'Significant Decline':
+                    self.output_text.insert(tk.END, "• Requires immediate attention and intervention\n")
+                    self.output_text.insert(tk.END, "• Review changes from baseline period\n")
+            
+            # Create baseline comparison visualization
+            self.plot_baseline_comparison(comparison_results)
+            
         except Exception as e:
-            logging.error(f"Error during analysis: {str(e)}")
+            logging.error(f"Error in run_analysis: {e}")
             messagebox.showerror("Error", f"Error during analysis: {str(e)}")
         finally:
             progress.destroy()
@@ -1764,7 +1824,7 @@ class AnalysisGUI:
             return False
 
     def generate_dynamic_recommendations(self, df, low_scores, high_scores, low_threshold, high_threshold):
-        """Generate recommendations based on statistical analysis of features"""
+        """Generate detailed recommendations based on comparative analysis of high vs low performing events"""
         recommendations = {}
         
         # Get rating scale parameters
@@ -1774,46 +1834,68 @@ class AnalysisGUI:
             avg_rating = df[feature].mean()
             std_dev = df[feature].std()
             
+            # Separate high and low performing events for comparison
+            high_performing = df[df[feature] >= high_threshold]
+            low_performing = df[df[feature] < low_threshold]
+            
             if feature in low_scores.index:
                 recommendations[feature] = []
                 
-                # Calculate percentage of low ratings
+                # Calculate detailed metrics
                 low_percent = (df[feature] < low_threshold).mean() * 100
                 
-                # Generate specific recommendations based on feature characteristics
+                # Compare characteristics between high and low performing events
+                comparative_analysis = {
+                    'timing': self.compare_event_timing(high_performing, low_performing),
+                    'resources': self.compare_resource_utilization(high_performing, low_performing),
+                    'participation': self.compare_participation_metrics(high_performing, low_performing)
+                }
+                
+                # Generate specific recommendations based on comparative analysis
                 rec = {
                     'text': f"Improve {feature.replace('_', ' ').title()} (current: {avg_rating:.2f}/{max_rating})",
                     'priority': 'High' if low_percent > 30 else 'Medium',
-                    'support': low_percent / 100,
-                    'confidence': 0.8,
-                    'lift': 1.2
                 }
                 
-                # Add specific actions based on statistical analysis
-                actions = [f"• Current average rating: {avg_rating:.2f}/{max_rating}"]
+                actions = [
+                    f"Current Performance Metrics:",
+                    f"• Average rating: {avg_rating:.2f}/{max_rating}",
+                    f"• {low_percent:.1f}% of events need improvement",
+                    f"\nKey Differences in High vs Low Performing Events:"
+                ]
                 
-                # Add actions based on severity
-                if avg_rating < low_threshold:
+                # Add specific insights from comparative analysis
+                if comparative_analysis['timing']:
                     actions.extend([
-                        f"• Immediate attention required: {low_percent:.1f}% gave low ratings",
-                        "• Conduct detailed review of current approach",
-                        f"• Schedule stakeholder meeting to address {feature.replace('_', ' ').lower()}",
-                        "• Develop improvement action plan within 2 weeks"
-                    ])
-                else:
-                    actions.extend([
-                        f"• Improvement needed: {low_percent:.1f}% gave low ratings",
-                        f"• Review current {feature.replace('_', ' ').lower()} processes",
-                        "• Identify specific areas for enhancement"
+                        "\nTiming and Schedule:",
+                        f"• {comparative_analysis['timing']}"
                     ])
                 
-                # Add recommendations based on variability
-                if std_dev > 0.5:  # High variability
+                if comparative_analysis['resources']:
                     actions.extend([
-                        "• High variation in ratings indicates inconsistent experience",
-                        "• Standardize delivery approach",
-                        "• Implement quality control measures"
+                        "\nResource Management:",
+                        f"• {comparative_analysis['resources']}"
                     ])
+                
+                if comparative_analysis['participation']:
+                    actions.extend([
+                        "\nParticipation Patterns:",
+                        f"• {comparative_analysis['participation']}"
+                    ])
+                
+                # Add specific improvement actions
+                actions.extend([
+                    "\nRecommended Actions:",
+                    "1. Short-term Improvements:",
+                    "   • Implement best practices from high-performing events",
+                    f"   • Focus on {feature.replace('_', ' ').lower()} standardization",
+                    "   • Establish clear success metrics",
+                    "",
+                    "2. Long-term Strategy:",
+                    "   • Develop comprehensive improvement plan",
+                    "   • Regular monitoring and evaluation",
+                    "   • Staff training and development"
+                ])
                 
                 rec['action'] = "\n".join(actions)
                 recommendations[feature].append(rec)
@@ -1879,6 +1961,98 @@ class AnalysisGUI:
         
         return recommendations
 
+    def compare_event_timing(self, high_performing, low_performing):
+        """Compare timing aspects between high and low performing events"""
+        try:
+            timing_insights = []
+            
+            if 'Event_Duration' in high_performing.columns:
+                high_duration = high_performing['Event_Duration'].mean()
+                low_duration = low_performing['Event_Duration'].mean()
+                
+                if abs(high_duration - low_duration) > 0.5:  # Significant difference threshold
+                    timing_insights.append(
+                        f"Successful events average {high_duration:.1f} hours vs "
+                        f"{low_duration:.1f} hours for lower-rated events"
+                    )
+            
+            if 'Time_Management' in high_performing.columns:
+                high_time_mgmt = high_performing['Time_Management'].mean()
+                low_time_mgmt = low_performing['Time_Management'].mean()
+                
+                if high_time_mgmt > low_time_mgmt:
+                    timing_insights.append(
+                        "Higher-rated events show better time management scores"
+                    )
+            
+            return "\n• ".join(timing_insights) if timing_insights else None
+            
+        except Exception as e:
+            logging.error(f"Error in compare_event_timing: {e}")
+            return None
+
+    def compare_resource_utilization(self, high_performing, low_performing):
+        """Compare resource utilization between high and low performing events"""
+        try:
+            resource_insights = []
+            
+            resource_columns = [
+                'Budget_Utilization', 'Resource_Efficiency',
+                'Staff_Allocation', 'Equipment_Usage'
+            ]
+            
+            for col in resource_columns:
+                if col in high_performing.columns:
+                    high_resource = high_performing[col].mean()
+                    low_resource = low_performing[col].mean()
+                    
+                    diff_percent = ((high_resource - low_resource) / low_resource) * 100
+                    
+                    if abs(diff_percent) > 10:  # Significant difference threshold
+                        resource_insights.append(
+                            f"{col.replace('_', ' ')}: {diff_percent:+.1f}% difference "
+                            "in high vs low performing events"
+                        )
+            
+            return "\n• ".join(resource_insights) if resource_insights else None
+            
+        except Exception as e:
+            logging.error(f"Error in compare_resource_utilization: {e}")
+            return None
+
+    def compare_participation_metrics(self, high_performing, low_performing):
+        """Compare participation metrics between high and low performing events"""
+        try:
+            participation_insights = []
+            
+            if 'Attendance_Rate' in high_performing.columns:
+                high_attendance = high_performing['Attendance_Rate'].mean()
+                low_attendance = low_performing['Attendance_Rate'].mean()
+                
+                diff_percent = ((high_attendance - low_attendance) / low_attendance) * 100
+                
+                if abs(diff_percent) > 5:  # Significant difference threshold
+                    participation_insights.append(
+                        f"Attendance rate is {diff_percent:+.1f}% higher "
+                        "in successful events"
+                    )
+            
+            if 'Engagement_Score' in high_performing.columns:
+                high_engagement = high_performing['Engagement_Score'].mean()
+                low_engagement = low_performing['Engagement_Score'].mean()
+                
+                if high_engagement > low_engagement:
+                    participation_insights.append(
+                        f"Participant engagement scores are {((high_engagement/low_engagement)-1)*100:.1f}% "
+                        "higher in successful events"
+                    )
+            
+            return "\n• ".join(participation_insights) if participation_insights else None
+            
+        except Exception as e:
+            logging.error(f"Error in compare_participation_metrics: {e}")
+            return None
+
     def plot_distribution_comparison(self, results):
         """Plot distribution comparison visualization"""
         try:
@@ -1923,6 +2097,186 @@ class AnalysisGUI:
             logging.error(f"Error in plot_distribution_comparison: {e}")
             raise
 
+    def calculate_baseline_performance(self, historical_data):
+        """
+        Calculate baseline performance metrics from historical data.
+        
+        Parameters:
+        - historical_data (dict): Dictionary of DataFrames containing historical event data
+        
+        Returns:
+        - dict: Baseline metrics for each feature
+        """
+        try:
+            # Get the earliest years that will form the baseline
+            sorted_years = sorted(historical_data.keys())
+            baseline_years = sorted_years[:2]  # Use first two years as baseline
+            
+            baseline_metrics = {}
+            
+            # Combine data from baseline years
+            baseline_data = pd.concat([historical_data[year] for year in baseline_years])
+            
+            for feature in self.selected_features:
+                baseline_metrics[feature] = {
+                    'mean': baseline_data[feature].mean(),
+                    'std': baseline_data[feature].std(),
+                    'percentiles': {
+                        'low': baseline_data[feature].quantile(0.25),
+                        'median': baseline_data[feature].median(),
+                        'high': baseline_data[feature].quantile(0.75)
+                    },
+                    'years': baseline_years
+                }
+                
+            return baseline_metrics
+            
+        except Exception as e:
+            logging.error(f"Error calculating baseline performance: {e}")
+            raise
+
+    def compare_against_baseline(self, current_data, baseline_metrics):
+        """
+        Compare current performance against baseline metrics.
+        
+        Parameters:
+        - current_data (DataFrame): Current event data
+        - baseline_metrics (dict): Baseline metrics from calculate_baseline_performance
+        
+        Returns:
+        - dict: Comparison results for each feature
+        """
+        try:
+            comparison_results = {}
+            
+            for feature in self.selected_features:
+                current_mean = current_data[feature].mean()
+                baseline_mean = baseline_metrics[feature]['mean']
+                baseline_std = baseline_metrics[feature]['std']
+                
+                # Calculate z-score to determine significance of change
+                z_score = (current_mean - baseline_mean) / baseline_std if baseline_std != 0 else 0
+                
+                # Calculate percentage change
+                pct_change = ((current_mean - baseline_mean) / baseline_mean) * 100
+                
+                # Determine performance category
+                if z_score > 1.96:  # 95% confidence level
+                    performance = 'Significant Improvement'
+                elif z_score < -1.96:
+                    performance = 'Significant Decline'
+                elif abs(z_score) <= 0.5:
+                    performance = 'Stable'
+                elif z_score > 0:
+                    performance = 'Slight Improvement'
+                else:
+                    performance = 'Slight Decline'
+                
+                comparison_results[feature] = {
+                    'current_mean': current_mean,
+                    'baseline_mean': baseline_mean,
+                    'pct_change': pct_change,
+                    'z_score': z_score,
+                    'performance': performance,
+                    'baseline_percentiles': baseline_metrics[feature]['percentiles']
+                }
+            
+            return comparison_results
+            
+        except Exception as e:
+            logging.error(f"Error comparing against baseline: {e}")
+            raise
+
+    def plot_baseline_comparison(self, comparison_results):
+        """
+        Create visualization comparing current performance against baseline.
+        """
+        try:
+            # Clear previous content in the tab
+            if not hasattr(self, 'baseline_tab'):
+                self.baseline_tab = ttk.Frame(self.tab_control)
+                self.tab_control.add(self.baseline_tab, text='Baseline Comparison')
+            else:
+                for widget in self.baseline_tab.winfo_children():
+                    widget.destroy()
+            
+            # Create figure with subplots
+            fig = plt.figure(figsize=(12, 6))
+            gs = fig.add_gridspec(2, 2)
+            
+            # 1. Performance Change Plot
+            ax1 = fig.add_subplot(gs[0, 0])
+            features = list(comparison_results.keys())
+            pct_changes = [results['pct_change'] for results in comparison_results.values()]
+            
+            colors = ['#2ecc71' if pct > 0 else '#e74c3c' for pct in pct_changes]
+            bars = ax1.bar(features, pct_changes, color=colors)
+            
+            ax1.axhline(y=0, color='black', linestyle='-', alpha=0.3)
+            ax1.set_title('Performance Change from Baseline')
+            ax1.set_ylabel('Percentage Change (%)')
+            plt.xticks(rotation=45, ha='right')
+            
+            # Add value labels on bars
+            for bar in bars:
+                height = bar.get_height()
+                ax1.text(bar.get_x() + bar.get_width()/2., height,
+                        f'{height:+.1f}%',
+                        ha='center', va='bottom' if height > 0 else 'top')
+            
+            # 2. Current vs Baseline Comparison
+            ax2 = fig.add_subplot(gs[0, 1])
+            x = np.arange(len(features))
+            width = 0.35
+            
+            current_means = [results['current_mean'] for results in comparison_results.values()]
+            baseline_means = [results['baseline_mean'] for results in comparison_results.values()]
+            
+            ax2.bar(x - width/2, baseline_means, width, label='Baseline', color='#3498db', alpha=0.7)
+            ax2.bar(x + width/2, current_means, width, label='Current', color='#e67e22', alpha=0.7)
+            
+            ax2.set_title('Current vs Baseline Ratings')
+            ax2.set_xticks(x)
+            ax2.set_xticklabels(features, rotation=45, ha='right')
+            ax2.legend()
+            
+            # 3. Performance Distribution
+            ax3 = fig.add_subplot(gs[1, :])
+            
+            # Create box plot data
+            box_data = []
+            labels = []
+            for feature in features:
+                baseline_percentiles = comparison_results[feature]['baseline_percentiles']
+                box_data.append([
+                    baseline_percentiles['low'],
+                    baseline_percentiles['median'],
+                    baseline_percentiles['high']
+                ])
+                labels.append(feature)
+            
+            # Plot baseline distribution
+            bp = ax3.boxplot(box_data, labels=labels, patch_artist=True)
+            
+            # Add current performance points
+            current_points = [results['current_mean'] for results in comparison_results.values()]
+            ax3.plot(range(1, len(features) + 1), current_points, 'ro', label='Current Performance')
+            
+            ax3.set_title('Performance Distribution')
+            ax3.set_xticklabels(labels, rotation=45, ha='right')
+            ax3.legend()
+            
+            plt.tight_layout()
+            
+            # Embed plot in GUI
+            canvas = FigureCanvasTkAgg(fig, master=self.baseline_tab)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+        except Exception as e:
+            logging.error(f"Error plotting baseline comparison: {e}")
+            raise
+
 def main():
     try:
         root = tk.Tk()
@@ -1932,4 +2286,4 @@ def main():
         print(f"Error in main: {e}")
 
 if __name__ == "__main__":
-    main()
+    main()  
