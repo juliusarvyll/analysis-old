@@ -15,6 +15,7 @@ from sklearn.decomposition import PCA
 import logging
 from sklearn.metrics import silhouette_score
 from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+import time
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -82,10 +83,17 @@ def analyze_event_ratings(df):
         logging.error(f"Error in analyze_event_ratings: {str(e)}")
         raise
 
-def prepare_for_association_rules(df, selected_features, year=None):
+def prepare_for_association_rules(df, selected_features, year=None, sample_size=None, random_state=42):
     """
     Convert selected features to transactions with ratings using fixed rating scale.
-    Optimized for memory efficiency and data quality.
+    Optimized for memory efficiency and data quality with sampling for large datasets.
+
+    Args:
+        df: DataFrame containing the data
+        selected_features: List of features to include in the analysis
+        year: Optional year filter
+        sample_size: Optional sample size for large datasets (int or float percentage)
+        random_state: Random seed for reproducible sampling
     """
     try:
         logging.info("Starting preparation of association rules data")
@@ -95,55 +103,172 @@ def prepare_for_association_rules(df, selected_features, year=None):
             logging.error("Empty dataframe or no features selected")
             return pd.DataFrame()
 
-        binary_df = pd.DataFrame()
+        # Sample data if needed for large datasets
+        original_size = len(df)
+        if sample_size is not None:
+            if isinstance(sample_size, float) and 0 < sample_size < 1:
+                # Sample by percentage
+                df = df.sample(frac=sample_size, random_state=random_state)
+            elif isinstance(sample_size, int) and sample_size > 0 and sample_size < len(df):
+                # Sample by absolute count
+                df = df.sample(n=sample_size, random_state=random_state)
 
-        # Define rating categories based on fixed scale (0-3)
-        rating_categories = {
-            'Needs_Improvement': (0, 0.74),
-            'Moderately_Satisfactory': (0.75, 1.49),
-            'Satisfactory': (1.50, 2.24),
-            'Very_Satisfactory': (2.25, 3.00)
-        }
+            logging.info(f"Sampled data from {original_size} to {len(df)} rows ({len(df)/original_size:.1%})")
 
-        def categorize_rating(x, categories=rating_categories):
-            if pd.isna(x):
-                return 'Missing'
-            for category, (lower, upper) in categories.items():
-                if lower <= x <= upper:
-                    return category
-            return 'Out_of_Range'
-
-        # Process selected features efficiently
-        for feature in selected_features:
-            if feature in df.columns:
-                # Convert to numeric and handle errors
-                numeric_values = pd.to_numeric(df[feature], errors='coerce')
-                categories = numeric_values.apply(categorize_rating)
-
-                # Create binary columns for each rating category
-                for category in rating_categories.keys():
-                    col_name = f"{feature}_{category}"
-                    binary_df[col_name] = (categories == category).astype(int)
-
-                # Log feature processing
-                valid_count = numeric_values.notna().sum()
-                logging.debug(f"Processed {feature}: {valid_count} valid values")
-
-        # Validate final binary dataframe
-        if binary_df.empty:
-            logging.warning("No valid binary columns created")
-            return pd.DataFrame()
-
-        logging.info(f"Created binary dataframe with {len(binary_df.columns)} columns")
-        return binary_df
+        # Use a more memory-efficient approach for large datasets
+        if len(df) > 10000:
+            return _prepare_for_association_rules_chunked(df, selected_features)
+        else:
+            return _prepare_for_association_rules_standard(df, selected_features)
 
     except Exception as e:
         logging.error(f"Error in prepare_for_association_rules: {e}")
         return pd.DataFrame()
 
-def generate_association_rules(binary_df, min_support=0.05):
+def _prepare_for_association_rules_standard(df, selected_features):
+    """Standard implementation for smaller datasets"""
+    binary_df = pd.DataFrame(index=df.index)
+
+    # Define rating categories based on fixed scale (0-3)
+    rating_categories = {
+        'Needs_Improvement': (0, 0.74),
+        'Moderately_Satisfactory': (0.75, 1.49),
+        'Satisfactory': (1.50, 2.24),
+        'Very_Satisfactory': (2.25, 3.00)
+    }
+
+    def categorize_rating(x, categories=rating_categories):
+        if pd.isna(x):
+            return 'Missing'
+        for category, (lower, upper) in categories.items():
+            if lower <= x <= upper:
+                return category
+        return 'Out_of_Range'
+
+    # Process selected features efficiently
+    for feature in selected_features:
+        if feature in df.columns:
+            # Convert to numeric and handle errors
+            numeric_values = pd.to_numeric(df[feature], errors='coerce')
+
+            # Skip features with too many missing values
+            missing_pct = numeric_values.isna().mean() * 100
+            if missing_pct > 50:
+                logging.warning(f"Skipping feature {feature} - {missing_pct:.1f}% missing values")
+                continue
+
+            categories = numeric_values.apply(categorize_rating)
+
+            # Check distribution of categories
+            category_counts = categories.value_counts(normalize=True) * 100
+
+            # Log category distribution
+            for category, pct in category_counts.items():
+                logging.debug(f"{feature} - {category}: {pct:.1f}%")
+
+            # Create binary columns for each rating category
+            for category in rating_categories.keys():
+                # Only create columns for categories that appear with sufficient frequency
+                category_count = (categories == category).sum()
+                if category_count > 0:
+                    col_name = f"{feature}_{category}"
+                    binary_df[col_name] = (categories == category).astype(int)
+
+                    # Log column creation
+                    pct = (category_count / len(df)) * 100
+                    logging.debug(f"Created column {col_name}: {category_count} occurrences ({pct:.1f}%)")
+
+            # Log feature processing
+            valid_count = numeric_values.notna().sum()
+            logging.debug(f"Processed {feature}: {valid_count} valid values")
+
+    # Validate final binary dataframe
+    if binary_df.empty:
+        logging.warning("No valid binary columns created")
+        return pd.DataFrame()
+
+    # Remove columns with too few occurrences (less than 1%)
+    min_count = len(df) * 0.01
+    column_counts = binary_df.sum()
+    low_count_columns = column_counts[column_counts < min_count].index.tolist()
+
+    if low_count_columns:
+        logging.info(f"Removing {len(low_count_columns)} columns with less than 1% occurrence")
+        binary_df = binary_df.drop(columns=low_count_columns)
+
+    if binary_df.empty:
+        logging.warning("No columns remain after filtering low-occurrence columns")
+        return pd.DataFrame()
+
+    logging.info(f"Created binary dataframe with {len(binary_df.columns)} columns")
+    return binary_df
+
+def _prepare_for_association_rules_chunked(df, selected_features, chunk_size=5000):
+    """Chunked implementation for larger datasets to reduce memory usage"""
+    # Initialize an empty DataFrame to store the results
+    binary_df = pd.DataFrame(index=df.index)
+
+    # Define rating categories based on fixed scale (0-3)
+    rating_categories = {
+        'Needs_Improvement': (0, 0.74),
+        'Moderately_Satisfactory': (0.75, 1.49),
+        'Satisfactory': (1.50, 2.24),
+        'Very_Satisfactory': (2.25, 3.00)
+    }
+
+    # Process features one by one to minimize memory usage
+    for feature in selected_features:
+        if feature not in df.columns:
+            continue
+
+        # Convert to numeric and handle errors
+        numeric_values = pd.to_numeric(df[feature], errors='coerce')
+
+        # Skip features with too many missing values
+        missing_pct = numeric_values.isna().mean() * 100
+        if missing_pct > 50:
+            logging.warning(f"Skipping feature {feature} - {missing_pct:.1f}% missing values")
+            continue
+
+        # Process in chunks to reduce memory usage
+        for category, (lower, upper) in rating_categories.items():
+            col_name = f"{feature}_{category}"
+            # Use vectorized operations instead of apply for better performance
+            column_data = ((numeric_values >= lower) & (numeric_values <= upper)).astype(int)
+
+            # Only add columns with sufficient occurrences (at least 1%)
+            count = column_data.sum()
+            if count >= len(df) * 0.01:
+                binary_df[col_name] = column_data
+                # Log column creation
+                pct = (count / len(df)) * 100
+                logging.debug(f"Created column {col_name}: {count} occurrences ({pct:.1f}%)")
+
+        # Log feature processing
+        valid_count = numeric_values.notna().sum()
+        logging.debug(f"Processed {feature}: {valid_count} valid values")
+
+    # Validate final binary dataframe
+    if binary_df.empty:
+        logging.warning("No valid binary columns created")
+        return pd.DataFrame()
+
+    logging.info(f"Created binary dataframe with {len(binary_df.columns)} columns and {len(binary_df)} rows")
+    return binary_df
+
+def generate_association_rules(binary_df, min_support=0.05, min_confidence=0.5, min_lift=1.0,
+                              max_len=3, use_parallel=True):
     """
     Generate association rules from binary data with optimized parameters and validation.
+    Includes parallel processing support for large datasets.
+
+    Args:
+        binary_df: Binary DataFrame prepared for association rule mining
+        min_support: Minimum support threshold (adjusted automatically for large datasets)
+        min_confidence: Minimum confidence threshold
+        min_lift: Minimum lift threshold for filtering rules
+        max_len: Maximum length of itemsets
+        use_parallel: Whether to use parallel processing
     """
     try:
         logging.info("Starting association rules generation")
@@ -152,61 +277,172 @@ def generate_association_rules(binary_df, min_support=0.05):
             logging.warning("Empty DataFrame provided for association rules")
             return pd.DataFrame()
 
-        # Log data statistics for debugging
-        logging.debug("Binary data statistics:")
-        support_counts = binary_df.sum()
-        for col in binary_df.columns:
-            support_pct = (support_counts[col] / len(binary_df)) * 100
-            logging.debug(f"{col}: {support_counts[col]} occurrences ({support_pct:.2f}%)")
+        # For very large datasets, adjust parameters automatically
+        row_count = len(binary_df)
+        col_count = len(binary_df.columns)
 
-        # Optimize min_support based on data size
-        adjusted_min_support = max(min_support, 2 / len(binary_df))
+        logging.info(f"Association rule mining on {row_count} rows and {col_count} columns")
+
+        # Calculate data density (percentage of non-zero values)
+        density = binary_df.sum().sum() / (row_count * col_count) * 100
+        logging.info(f"Data density: {density:.2f}%")
+
+        # Adjust parameters based on data characteristics
+        if density < 5:
+            # For very sparse data, lower the support threshold
+            logging.info("Data is very sparse, lowering support threshold")
+            min_support = min(min_support, 0.02)
+
+        if row_count > 100000:
+            logging.info(f"Large dataset detected ({row_count} rows). Adjusting parameters.")
+            # Increase min_support for very large datasets to reduce computation
+            min_support = max(min_support, 0.1)
+            max_len = min(max_len, 2)  # Reduce max_len for very large datasets
+        elif row_count > 50000:
+            min_support = max(min_support, 0.075)
+        elif row_count > 10000:
+            min_support = max(min_support, 0.05)
+        elif row_count < 1000:
+            # For small datasets, use a lower minimum support
+            min_support = min(min_support, 0.03)
+
+        # Ensure min_support is at least 2 transactions
+        adjusted_min_support = max(min_support, 2 / row_count)
         logging.info(f"Using adjusted min_support: {adjusted_min_support}")
 
         # Generate frequent itemsets with optimized parameters
         try:
-            frequent_itemsets = apriori(
-                binary_df,
-                min_support=adjusted_min_support,
-                use_colnames=True,
-                max_len=3,  # Limit to 3-item sets for efficiency
-                verbose=1
-            )
+            # Set up progress tracking
+            start_time = time.time()
+            logging.info(f"Starting apriori algorithm with {row_count} rows and {col_count} columns")
+
+            # Configure parallel processing if enabled
+            if use_parallel and row_count > 5000:
+                logging.info("Using parallel processing")
+                frequent_itemsets = apriori(
+                    binary_df,
+                    min_support=adjusted_min_support,
+                    use_colnames=True,
+                    max_len=max_len,
+                    verbose=1,
+                    low_memory=True  # Use low memory mode for large datasets
+                    # n_jobs parameter removed as it's not supported
+                )
+            else:
+                frequent_itemsets = apriori(
+                    binary_df,
+                    min_support=adjusted_min_support,
+                    use_colnames=True,
+                    max_len=max_len,
+                    verbose=1,
+                    low_memory=True   # Use low memory mode for large datasets
+                )
+
+            apriori_time = time.time() - start_time
+            logging.info(f"Apriori completed in {apriori_time:.2f} seconds")
 
             if frequent_itemsets is None or frequent_itemsets.empty:
                 logging.warning(f"No frequent itemsets found with min_support={adjusted_min_support}")
-                return pd.DataFrame()
+
+                # Try with a lower support threshold as a fallback
+                if adjusted_min_support > 0.01:
+                    fallback_support = max(0.01, adjusted_min_support / 2)
+                    logging.info(f"Retrying with lower support threshold: {fallback_support}")
+
+                    frequent_itemsets = apriori(
+                        binary_df,
+                        min_support=fallback_support,
+                        use_colnames=True,
+                        max_len=max_len,
+                        verbose=1,
+                        low_memory=True
+                    )
+
+                    if frequent_itemsets is None or frequent_itemsets.empty:
+                        logging.warning(f"Still no frequent itemsets found with min_support={fallback_support}")
+                        return pd.DataFrame()
+                else:
+                    return pd.DataFrame()
 
             logging.info(f"Found {len(frequent_itemsets)} frequent itemsets")
 
+            # For very large results, sample the frequent itemsets to reduce memory usage
+            if len(frequent_itemsets) > 10000:
+                logging.info(f"Large number of frequent itemsets ({len(frequent_itemsets)}). Sampling top 10000 by support.")
+                frequent_itemsets = frequent_itemsets.sort_values('support', ascending=False).head(10000)
+
             # Generate rules with optimized confidence threshold
-            rules = association_rules(
-                frequent_itemsets,
-                metric="confidence",
-                min_threshold=0.5,  # Higher confidence threshold for better quality
-                support_only=False
-            )
+            rules_start_time = time.time()
+
+            # Try with progressively lower confidence thresholds if needed
+            confidence_thresholds = [min_confidence, 0.3, 0.2]
+            rules = pd.DataFrame()
+
+            for conf_threshold in confidence_thresholds:
+                logging.info(f"Trying with confidence threshold: {conf_threshold}")
+
+                rules = association_rules(
+                    frequent_itemsets,
+                    metric="confidence",
+                    min_threshold=conf_threshold,
+                    support_only=False
+                )
+
+                if not rules.empty:
+                    logging.info(f"Found {len(rules)} rules with confidence threshold {conf_threshold}")
+                    break
+                else:
+                    logging.warning(f"No rules found with confidence threshold {conf_threshold}")
+
+            rules_time = time.time() - rules_start_time
+            logging.info(f"Rules generation completed in {rules_time:.2f} seconds")
 
             if rules.empty:
-                logging.warning("No rules generated with current thresholds")
+                logging.warning("No rules generated with any confidence threshold")
                 return pd.DataFrame()
 
             # Filter rules by lift for significance
-            significant_rules = rules[rules['lift'] > 1.0]
+            min_lift_thresholds = [min_lift, 0.8, 0.5]
+            significant_rules = pd.DataFrame()
 
-            # Sort rules by lift and confidence
-            significant_rules = significant_rules.sort_values(
-                ['lift', 'confidence'],
-                ascending=[False, False]
-            )
+            for lift_threshold in min_lift_thresholds:
+                significant_rules = rules[rules['lift'] > lift_threshold]
+
+                if not significant_rules.empty:
+                    logging.info(f"Found {len(significant_rules)} rules with lift threshold {lift_threshold}")
+                    break
+                else:
+                    logging.warning(f"No rules found with lift threshold {lift_threshold}")
+
+            if significant_rules.empty:
+                logging.warning("No significant rules found with any lift threshold")
+                return pd.DataFrame()
+
+            # For very large results, limit the number of rules
+            if len(significant_rules) > 5000:
+                logging.info(f"Large number of rules ({len(significant_rules)}). Limiting to top 5000 by lift.")
+                significant_rules = significant_rules.sort_values(
+                    ['lift', 'confidence'],
+                    ascending=[False, False]
+                ).head(5000)
+            else:
+                # Sort rules by lift and confidence
+                significant_rules = significant_rules.sort_values(
+                    ['lift', 'confidence'],
+                    ascending=[False, False]
+                )
 
             # Add support percentage for better interpretation
             significant_rules['support_pct'] = significant_rules['support'] * 100
             significant_rules['confidence_pct'] = significant_rules['confidence'] * 100
 
-            logging.info(f"Generated {len(significant_rules)} significant rules")
+            total_time = time.time() - start_time
+            logging.info(f"Generated {len(significant_rules)} significant rules in {total_time:.2f} seconds")
             return significant_rules
 
+        except MemoryError:
+            logging.error("Memory error during rule generation. Try reducing the dataset size or increasing min_support.")
+            return pd.DataFrame()
         except Exception as e:
             logging.error(f"Error in rule generation: {str(e)}", exc_info=True)
             return pd.DataFrame()
@@ -555,7 +791,7 @@ class AnalysisGUI:
             self.rules_tab = ttk.Frame(self.tab_control)
             self.descriptive_tab = ttk.Frame(self.tab_control)
             self.histogram_tab = ttk.Frame(self.tab_control)
-            self.distribution_tab = ttk.Frame(self.tab_control)
+            # self.distribution_tab = ttk.Frame(self.tab_control)  # Removed distribution tab
             self.recommendations_tab = ttk.Frame(self.tab_control)
             self.baseline_tab = ttk.Frame(self.tab_control)
             self.cluster_trends_tab = ttk.Frame(self.tab_control)  # Add new tab for cluster trends per year
@@ -566,7 +802,7 @@ class AnalysisGUI:
             self.tab_control.add(self.rules_tab, text='Association Rules')
             self.tab_control.add(self.descriptive_tab, text='Descriptive Stats')
             self.tab_control.add(self.histogram_tab, text='Histograms')
-            self.tab_control.add(self.distribution_tab, text='Distribution')
+            # self.tab_control.add(self.distribution_tab, text='Distribution')  # Removed distribution tab
             self.tab_control.add(self.recommendations_tab, text='Recommendations')
             self.tab_control.add(self.baseline_tab, text='Baseline Comparisons')
             self.tab_control.add(self.cluster_trends_tab, text='Cluster Trends Per Year')  # Add new tab
@@ -622,9 +858,9 @@ class AnalysisGUI:
             self.recommendations_text.delete(1.0, tk.END)
 
             # Clear previous visualizations
-            for tab in [self.cluster_tab, self.distribution_tab, self.histogram_tab,
+            for tab in [self.cluster_tab, self.histogram_tab,
                        self.rules_tab, self.descriptive_tab, self.baseline_tab,
-                       self.cluster_trends_tab]:
+                       self.cluster_trends_tab]:  # Removed distribution_tab
                 for widget in tab.winfo_children():
                     widget.destroy()
 
@@ -692,11 +928,111 @@ class AnalysisGUI:
             self.output_text.update()
 
             try:
-                # Prepare data for association rules
-                binary_df = prepare_for_association_rules(filtered_df, self.selected_features)
+                # Create a progress indicator for large datasets
+                progress_frame = None
+                progress_bar = None
+                progress_label = None
 
-                # Generate rules
-                rules = generate_association_rules(binary_df)
+                if len(filtered_df) > 10000:
+                    # Create a progress frame
+                    progress_frame = ttk.Frame(self.output_tab)
+                    progress_frame.pack(fill=tk.X, padx=10, pady=5)
+
+                    # Add a label
+                    progress_label = ttk.Label(progress_frame, text="Processing association rules...")
+                    progress_label.pack(side=tk.TOP, pady=2)
+
+                    # Add a progress bar
+                    progress_bar = ttk.Progressbar(progress_frame, mode='indeterminate')
+                    progress_bar.pack(fill=tk.X, pady=2)
+                    progress_bar.start(10)  # Start the animation
+
+                    # Update the UI
+                    self.root.update()
+
+                # Determine if we need to sample based on data size
+                sample_size = None
+                if len(filtered_df) > 50000:
+                    sample_size = 50000  # Cap at 50k rows for very large datasets
+                    self.output_text.insert(tk.END, f"Dataset is large ({len(filtered_df)} rows). Sampling to {sample_size} rows for association rule mining.\n")
+                elif len(filtered_df) > 20000:
+                    sample_size = 0.5  # Use 50% for moderately large datasets
+                    self.output_text.insert(tk.END, f"Dataset is moderately large ({len(filtered_df)} rows). Sampling to 50% for association rule mining.\n")
+
+                # Update progress label
+                if progress_label:
+                    progress_label.config(text="Preparing data for association rules...")
+                    self.root.update()
+
+                binary_df = prepare_for_association_rules(filtered_df, self.selected_features, sample_size=sample_size)
+
+                # Add diagnostic information about the binary data
+                if binary_df.empty:
+                    self.output_text.insert(tk.END, "\nNo valid binary data was created. Check your feature selection.\n")
+                else:
+                    # Count non-zero values in each column
+                    column_counts = binary_df.sum().sort_values(ascending=False)
+                    total_rows = len(binary_df)
+
+                    # Display the top 10 most frequent items
+                    self.output_text.insert(tk.END, f"\nTop 10 most frequent rating categories (out of {len(column_counts)} total):\n")
+                    for col, count in column_counts.head(10).items():
+                        percentage = (count / total_rows) * 100
+                        self.output_text.insert(tk.END, f"- {col}: {count} occurrences ({percentage:.2f}%)\n")
+
+                    # Check if any columns have sufficient support
+                    min_required = 0.05 * total_rows  # 5% minimum support
+                    columns_with_support = column_counts[column_counts >= min_required].shape[0]
+                    self.output_text.insert(tk.END, f"\n{columns_with_support} out of {len(column_counts)} categories meet the 5% minimum support threshold.\n")
+
+                    if columns_with_support < 2:
+                        self.output_text.insert(tk.END, "WARNING: Less than 2 categories meet the minimum support threshold. Try lowering the threshold.\n")
+
+                # Update progress label
+                if progress_label:
+                    progress_label.config(text="Generating association rules...")
+                    self.root.update()
+
+                # Generate rules with optimized parameters for dataset size
+                min_support = 0.05
+                if len(binary_df) > 50000:
+                    min_support = 0.1
+                elif len(binary_df) > 20000:
+                    min_support = 0.075
+                elif len(binary_df) < 1000:
+                    # For small datasets, use a lower minimum support
+                    min_support = 0.03
+
+                # Use parallel processing for large datasets
+                use_parallel = len(binary_df) > 5000
+
+                # Try with progressively lower support thresholds if needed
+                support_thresholds = [min_support, min_support/2, min_support/4]
+                rules = pd.DataFrame()
+
+                for threshold in support_thresholds:
+                    self.output_text.insert(tk.END, f"\nTrying with minimum support: {threshold:.4f}\n")
+                    self.output_text.update()
+
+                    rules = generate_association_rules(
+                        binary_df,
+                        min_support=threshold,
+                        min_confidence=0.3,  # Lower confidence threshold to find more rules
+                        min_lift=1.0,
+                        use_parallel=use_parallel
+                        # n_jobs parameter removed as it's not supported
+                    )
+
+                    if not rules.empty:
+                        self.output_text.insert(tk.END, f"Found {len(rules)} rules with support threshold {threshold:.4f}\n")
+                        break
+                    else:
+                        self.output_text.insert(tk.END, f"No rules found with support threshold {threshold:.4f}\n")
+
+                # Remove progress indicator if it exists
+                if progress_frame:
+                    progress_bar.stop()
+                    progress_frame.destroy()
 
                 if not rules.empty:
                     # Display association rules interpretation
@@ -706,9 +1042,71 @@ class AnalysisGUI:
                     # Plot association rules
                     self.plot_association_rules(rules, self.current_department.get())
                 else:
-                    self.output_text.insert(tk.END, "\nNo significant association rules found.\n")
+                    self.output_text.insert(tk.END, "\nNo significant association rules found after multiple attempts.\n")
+                    self.output_text.insert(tk.END, "Possible reasons:\n")
+                    self.output_text.insert(tk.END, "1. Data is too sparse or has insufficient patterns\n")
+                    self.output_text.insert(tk.END, "2. Selected features don't have strong associations\n")
+                    self.output_text.insert(tk.END, "3. Sample size is too small after filtering\n")
+                    self.output_text.insert(tk.END, "4. Rating distributions are too uniform\n")
+                    self.output_text.insert(tk.END, "\nTry the following:\n")
+                    self.output_text.insert(tk.END, "- Select different or more features\n")
+                    self.output_text.insert(tk.END, "- Include more data or different departments\n")
+                    self.output_text.insert(tk.END, "- Check for data quality issues\n")
+
+                    # Add a button to try with very relaxed parameters
+                    retry_frame = ttk.Frame(self.output_tab)
+                    retry_frame.pack(fill=tk.X, padx=10, pady=5)
+
+                    def try_relaxed_parameters():
+                        self.output_text.insert(tk.END, "\nTrying with extremely relaxed parameters...\n")
+                        self.output_text.update()
+
+                        # Create progress indicator
+                        retry_progress = ttk.Progressbar(retry_frame, mode='indeterminate')
+                        retry_progress.pack(fill=tk.X, pady=2)
+                        retry_progress.start(10)
+                        self.root.update()
+
+                        # Try with extremely relaxed parameters
+                        relaxed_rules = generate_association_rules(
+                            binary_df,
+                            min_support=0.01,  # Very low support
+                            min_confidence=0.1,  # Very low confidence
+                            min_lift=0.5,      # Accept even slightly negative correlations
+                            max_len=2,         # Only look for pairs to simplify
+                            use_parallel=True
+                            # n_jobs parameter removed as it's not supported
+                        )
+
+                        # Stop progress
+                        retry_progress.stop()
+                        retry_progress.destroy()
+
+                        if not relaxed_rules.empty:
+                            self.output_text.insert(tk.END, f"\nFound {len(relaxed_rules)} rules with relaxed parameters.\n")
+                            self.output_text.insert(tk.END, "Note: These rules have very low support/confidence and should be interpreted with caution.\n\n")
+                            self.output_text.insert(tk.END, interpret_event_association_rules(relaxed_rules))
+
+                            # Plot the rules
+                            self.plot_association_rules(relaxed_rules, f"{self.current_department.get()} (Relaxed Parameters)")
+
+                            # Switch to the rules tab
+                            self.tab_control.select(self.rules_tab)
+                        else:
+                            self.output_text.insert(tk.END, "\nStill no rules found even with extremely relaxed parameters.\n")
+                            self.output_text.insert(tk.END, "This suggests there may be fundamental issues with the data or feature selection.\n")
+
+                        # Remove the retry button after use
+                        retry_button.destroy()
+
+                    retry_button = ttk.Button(retry_frame, text="Try with Extremely Relaxed Parameters", command=try_relaxed_parameters)
+                    retry_button.pack(pady=5)
 
             except Exception as e:
+                # Remove progress indicator if it exists in case of error
+                if 'progress_frame' in locals() and progress_frame:
+                    progress_frame.destroy()
+
                 self.output_text.insert(tk.END, f"Error during association rules analysis: {str(e)}\n")
                 logging.error(f"Association rules error: {str(e)}")
 
@@ -778,22 +1176,14 @@ class AnalysisGUI:
             except Exception as e:
                 logging.error(f"Error creating histograms: {str(e)}")
 
-            # 6. Create distribution visualizations
+            # 5.6 Create recommendations visualizations
             try:
-                # Calculate distribution results
-                distribution_results = {}
-                for feature in self.selected_features:
-                    if feature != 'department_name':
-                        distribution_results[feature] = {
-                            'mean': filtered_df[feature].mean(),
-                            'std': filtered_df[feature].std(),
-                            'min': filtered_df[feature].min(),
-                            'max': filtered_df[feature].max()
-                        }
-
-                self.plot_distribution_comparison(distribution_results)
+                self.plot_recommendations()
             except Exception as e:
-                logging.error(f"Error creating distribution visualizations: {str(e)}")
+                logging.error(f"Error creating recommendations: {str(e)}")
+
+            # 6. Create distribution visualizations - REMOVED
+            # Distribution tab has been removed
 
             # 7. Create baseline comparisons if multiple years exist
             if len(self.datasets) > 1:
@@ -885,13 +1275,26 @@ class AnalysisGUI:
             # Reset selection to "All Departments"
             self.current_department.set("All Departments")
 
-    def get_filtered_data(self):
-        """Get data filtered by selected department"""
+    def get_filtered_data(self, year=None):
+        """Get data filtered by selected department and optionally by year
+
+        Args:
+            year (str, optional): The year to filter data for. If None, uses the currently loaded dataset.
+
+        Returns:
+            pandas.DataFrame: The filtered dataset
+        """
+        # If year is specified, use that dataset, otherwise use the current df
+        if year is not None and year in self.datasets:
+            df_to_filter = self.datasets[year]
+        else:
+            df_to_filter = self.df
+
         if self.current_department.get() == "All Departments":
-            return self.df
+            return df_to_filter
         else:
             # Keep department_name as is, don't try to convert it to numeric
-            filtered_df = self.df[self.df['department_name'] == self.current_department.get()].copy()
+            filtered_df = df_to_filter[df_to_filter['department_name'] == self.current_department.get()].copy()
 
             # Convert only numeric columns, excluding department_name
             numeric_cols = [col for col in filtered_df.columns if col != 'department_name']
@@ -967,9 +1370,9 @@ class AnalysisGUI:
                 self.output_text.delete(1.0, tk.END)
                 self.recommendations_text.delete(1.0, tk.END)
 
-                # Clear all plots
-                for tab in [self.cluster_tab, self.distribution_tab,
-                           self.histogram_tab, self.rules_tab]:
+                # Clear all visualization tabs
+                for tab in [self.cluster_tab,
+                           self.histogram_tab, self.rules_tab]:  # Removed distribution_tab
                     for widget in tab.winfo_children():
                         widget.destroy()
 
@@ -999,24 +1402,24 @@ class AnalysisGUI:
 
         self.descriptive_tab = ttk.Frame(self.tab_control)
         self.cluster_tab = ttk.Frame(self.tab_control)
-        self.distribution_tab = ttk.Frame(self.tab_control)
+        # self.distribution_tab = ttk.Frame(self.tab_control)  # Removed distribution tab
         self.histogram_tab = ttk.Frame(self.tab_control)
         self.rules_tab = ttk.Frame(self.tab_control)
-        self.analysis_tab = ttk.Frame(self.tab_control)
+        self.output_tab = ttk.Frame(self.tab_control)
         self.recommendations_tab = ttk.Frame(self.tab_control)  # Add recommendations tab
 
         self.tab_control.add(self.descriptive_tab, text='Descriptive Analysis')
         self.tab_control.add(self.cluster_tab, text='Clustering')
-        self.tab_control.add(self.distribution_tab, text='Distribution')
+        # self.tab_control.add(self.distribution_tab, text='Distribution')  # Removed distribution tab
         self.tab_control.add(self.histogram_tab, text='Histograms')
         self.tab_control.add(self.rules_tab, text='Association Rules')
-        self.tab_control.add(self.analysis_tab, text='Analysis Results')
+        self.tab_control.add(self.output_tab, text='Analysis Results')
         self.tab_control.add(self.recommendations_tab, text='Recommendations')  # Add recommendations tab
 
         self.tab_control.pack(fill=tk.BOTH, expand=True)
 
         # Create scrolled text widgets for both analysis and recommendations tabs
-        self.output_text = scrolledtext.ScrolledText(self.analysis_tab, wrap=tk.WORD, height=20)
+        self.output_text = scrolledtext.ScrolledText(self.output_tab, wrap=tk.WORD, height=20)
         self.output_text.pack(fill=tk.BOTH, expand=True)
 
         self.recommendations_text = scrolledtext.ScrolledText(self.recommendations_tab, wrap=tk.WORD, height=20)
@@ -1673,11 +2076,108 @@ class AnalysisGUI:
                     self.output_text.update()
 
                     try:
-                        # Prepare data for association rules
-                        binary_df = prepare_for_association_rules(df_to_analyze, self.selected_features, selected_year)
+                        # Create a progress indicator for large datasets
+                        progress_frame = None
+                        progress_bar = None
 
-                        # Generate rules
-                        new_rules = generate_association_rules(binary_df)
+                        if len(df_to_analyze) > 10000:
+                            # Create a progress frame in the rules tab
+                            progress_frame = ttk.Frame(main_frame)
+                            progress_frame.pack(fill=tk.X, padx=10, pady=5)
+
+                            # Add a label
+                            progress_label = ttk.Label(progress_frame, text="Processing association rules...")
+                            progress_label.pack(side=tk.TOP, pady=2)
+
+                            # Add a progress bar
+                            progress_bar = ttk.Progressbar(progress_frame, mode='indeterminate')
+                            progress_bar.pack(fill=tk.X, pady=2)
+                            progress_bar.start(10)  # Start the animation
+
+                            # Update the UI
+                            self.root.update()
+
+                        # Determine if we need to sample based on data size
+                        sample_size = None
+                        if len(df_to_analyze) > 50000:
+                            sample_size = 50000  # Cap at 50k rows for very large datasets
+                            self.output_text.insert(tk.END, f"Dataset is large ({len(df_to_analyze)} rows). Sampling to {sample_size} rows for association rule mining.\n")
+                        elif len(df_to_analyze) > 20000:
+                            sample_size = 0.5  # Use 50% for moderately large datasets
+                            self.output_text.insert(tk.END, f"Dataset is moderately large ({len(df_to_analyze)} rows). Sampling to 50% for association rule mining.\n")
+
+                        # Update progress label if it exists
+                        if 'progress_label' in locals() and progress_label:
+                            progress_label.config(text="Preparing data for association rules...")
+                            self.root.update()
+
+                        # Prepare data for association rules
+                        binary_df = prepare_for_association_rules(df_to_analyze, self.selected_features, selected_year, sample_size=sample_size)
+
+                        # Add diagnostic information about the binary data
+                        if binary_df.empty:
+                            self.output_text.insert(tk.END, f"\nNo valid binary data was created for {selected_year}. Check your feature selection.\n")
+                        else:
+                            # Count non-zero values in each column
+                            column_counts = binary_df.sum().sort_values(ascending=False)
+                            total_rows = len(binary_df)
+
+                            # Display the top 5 most frequent items
+                            self.output_text.insert(tk.END, f"\nTop 5 most frequent rating categories for {selected_year}:\n")
+                            for col, count in column_counts.head(5).items():
+                                percentage = (count / total_rows) * 100
+                                self.output_text.insert(tk.END, f"- {col}: {count} occurrences ({percentage:.2f}%)\n")
+
+                            # Check if any columns have sufficient support
+                            min_required = 0.05 * total_rows  # 5% minimum support
+                            columns_with_support = column_counts[column_counts >= min_required].shape[0]
+                            self.output_text.insert(tk.END, f"\n{columns_with_support} out of {len(column_counts)} categories meet the 5% minimum support threshold.\n")
+
+                        # Update progress label if it exists
+                        if 'progress_label' in locals() and progress_label:
+                            progress_label.config(text="Generating association rules...")
+                            self.root.update()
+
+                        # Generate rules with optimized parameters for dataset size
+                        min_support = 0.05
+                        if len(binary_df) > 50000:
+                            min_support = 0.1
+                        elif len(binary_df) > 20000:
+                            min_support = 0.075
+                        elif len(binary_df) < 1000:
+                            # For small datasets, use a lower minimum support
+                            min_support = 0.03
+
+                        # Use parallel processing for large datasets
+                        use_parallel = len(binary_df) > 5000
+
+                        # Try with progressively lower support thresholds if needed
+                        support_thresholds = [min_support, min_support/2, min_support/4]
+                        new_rules = pd.DataFrame()
+
+                        for threshold in support_thresholds:
+                            self.output_text.insert(tk.END, f"\nTrying with minimum support: {threshold:.4f} for {selected_year}\n")
+                            self.output_text.update()
+
+                            new_rules = generate_association_rules(
+                                binary_df,
+                                min_support=threshold,
+                                min_confidence=0.3,  # Lower confidence threshold to find more rules
+                                min_lift=1.0,
+                                use_parallel=use_parallel
+                                # n_jobs parameter removed as it's not supported
+                            )
+
+                            if not new_rules.empty:
+                                self.output_text.insert(tk.END, f"Found {len(new_rules)} rules for {selected_year} with support threshold {threshold:.4f}\n")
+                                break
+                            else:
+                                self.output_text.insert(tk.END, f"No rules found for {selected_year} with support threshold {threshold:.4f}\n")
+
+                        # Remove progress indicator if it exists
+                        if 'progress_frame' in locals() and progress_frame:
+                            progress_bar.stop()
+                            progress_frame.destroy()
 
                         # Clear the main frame and recreate the plot
                         for widget in main_frame.winfo_children():
@@ -1691,9 +2191,81 @@ class AnalysisGUI:
                         year_dropdown.pack(side=tk.LEFT, padx=5)
                         year_dropdown.bind("<<ComboboxSelected>>", on_year_change)
 
-                        # Plot the new rules
-                        self.plot_association_rules(new_rules, selected_year)
+                        # Plot the new rules or show a message if none found
+                        if not new_rules.empty:
+                            self.plot_association_rules(new_rules, selected_year)
+                        else:
+                            # Add a message to the main frame
+                            message_frame = ttk.Frame(main_frame)
+                            message_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+                            ttk.Label(message_frame, text=f"No significant association rules found for {selected_year}",
+                                     font=('Arial', 12, 'bold')).pack(pady=10)
+
+                            # Add a button to try with very relaxed parameters
+                            def try_relaxed_parameters():
+                                self.output_text.insert(tk.END, f"\nTrying with extremely relaxed parameters for {selected_year}...\n")
+                                self.output_text.update()
+
+                                # Create progress indicator
+                                retry_label = ttk.Label(message_frame, text="Processing with relaxed parameters...")
+                                retry_label.pack(pady=5)
+                                retry_progress = ttk.Progressbar(message_frame, mode='indeterminate')
+                                retry_progress.pack(fill=tk.X, padx=20, pady=5)
+                                retry_progress.start(10)
+                                self.root.update()
+
+                                # Try with extremely relaxed parameters
+                                relaxed_rules = generate_association_rules(
+                                    binary_df,
+                                    min_support=0.01,  # Very low support
+                                    min_confidence=0.1,  # Very low confidence
+                                    min_lift=0.5,      # Accept even slightly negative correlations
+                                    max_len=2,         # Only look for pairs to simplify
+                                    use_parallel=True
+                                    # n_jobs parameter removed as it's not supported
+                                )
+
+                                # Stop progress
+                                retry_progress.stop()
+                                retry_progress.destroy()
+                                retry_label.destroy()
+
+                                if not relaxed_rules.empty:
+                                    self.output_text.insert(tk.END, f"\nFound {len(relaxed_rules)} rules for {selected_year} with relaxed parameters.\n")
+                                    self.output_text.insert(tk.END, "Note: These rules have very low support/confidence and should be interpreted with caution.\n")
+
+                                    # Clear the message frame
+                                    for widget in message_frame.winfo_children():
+                                        widget.destroy()
+
+                                    # Plot the rules
+                                    self.plot_association_rules(relaxed_rules, f"{selected_year} (Relaxed Parameters)")
+                                else:
+                                    self.output_text.insert(tk.END, f"\nStill no rules found for {selected_year} even with extremely relaxed parameters.\n")
+                                    ttk.Label(message_frame, text="No rules found even with relaxed parameters.",
+                                            font=('Arial', 10)).pack(pady=5)
+
+                                # Remove the retry button after use
+                                retry_button.destroy()
+
+                            retry_button = ttk.Button(message_frame, text="Try with Extremely Relaxed Parameters",
+                                                    command=try_relaxed_parameters)
+                            retry_button.pack(pady=10)
+
+                            # Add suggestions
+                            suggestions = ttk.Frame(message_frame)
+                            suggestions.pack(fill=tk.X, padx=10, pady=10)
+
+                            ttk.Label(suggestions, text="Suggestions:", font=('Arial', 10, 'bold')).pack(anchor='w')
+                            ttk.Label(suggestions, text="• Select different or more features").pack(anchor='w')
+                            ttk.Label(suggestions, text="• Check for data quality issues").pack(anchor='w')
+                            ttk.Label(suggestions, text="• Ensure sufficient data for this year").pack(anchor='w')
                     except Exception as e:
+                        # Remove progress indicator if it exists in case of error
+                        if 'progress_frame' in locals() and progress_frame:
+                            progress_frame.destroy()
+
                         self.output_text.insert(tk.END, f"Error during association rules analysis: {str(e)}\n")
                         logging.error(f"Association rules error: {str(e)}")
 
@@ -1921,6 +2493,7 @@ class AnalysisGUI:
             header_label.pack(pady=5)
 
             # If multiple datasets are loaded, add a dropdown to select which year to view
+            # Position the year selection dropdown right after the header
             if len(self.datasets) > 1:
                 year_frame = ttk.Frame(plot_frame)
                 year_frame.pack(fill=tk.X, padx=10, pady=5)
@@ -1929,16 +2502,22 @@ class AnalysisGUI:
 
                 year_var = tk.StringVar(value="Combined")
                 year_options = ["Combined"] + sorted(self.datasets.keys())
-                year_dropdown = ttk.Combobox(year_frame, textvariable=year_var, values=year_options, state="readonly")
+                year_dropdown = ttk.Combobox(year_frame, textvariable=year_var, values=year_options, state="readonly", width=15)
                 year_dropdown.pack(side=tk.LEFT, padx=5)
+                year_dropdown.set("Combined")  # Default to combined view
 
+            # Create summary statistics table frame
+            stats_frame = ttk.LabelFrame(plot_frame, text="Summary Statistics")
+            stats_frame.pack(fill=tk.X, padx=10, pady=10)
+
+            if len(self.datasets) > 1:
                 def on_year_change(event=None):
                     # Clear existing stats
                     for widget in stats_frame.winfo_children():
                         widget.destroy()
 
-                    # Create new stats text widget
-                    stats_text = tk.Text(stats_frame, height=20, width=150, state='disabled')
+                    # Create new stats text widget with increased height
+                    stats_text = tk.Text(stats_frame, height=70, width=150, state='disabled')
                     stats_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
                     # Configure the text widget to be non-editable but allow configuration
@@ -1948,10 +2527,12 @@ class AnalysisGUI:
                     selected_year = year_var.get()
                     if selected_year == "Combined":
                         df_to_analyze = filtered_df
+                        title_text = "Combined Data"
                     else:
                         df_to_analyze = self.datasets[selected_year]
                         if self.current_department.get() != "All Departments":
                             df_to_analyze = df_to_analyze[df_to_analyze['department_name'] == self.current_department.get()]
+                        title_text = f"Year {selected_year}"
 
                     # Create a copy of the dataframe with only numeric columns
                     numeric_df = df_to_analyze.copy()
@@ -1968,7 +2549,7 @@ class AnalysisGUI:
                     summary_stats['cv'] = summary_stats['std'] / summary_stats['mean'] * 100  # Coefficient of variation
 
                     # Format and display the statistics
-                    stats_text.insert(tk.END, f"Feature Statistics for {selected_year}:\n\n")
+                    stats_text.insert(tk.END, f"Feature Statistics for {title_text}:\n\n")
 
                     # Add description of statistical measures
                     stats_text.insert(tk.END, "Statistical Measures Explanation:\n")
@@ -1993,58 +2574,54 @@ class AnalysisGUI:
 
                 year_dropdown.bind('<<ComboboxSelected>>', on_year_change)
 
-            # Create summary statistics table
-            stats_frame = ttk.LabelFrame(plot_frame, text="Summary Statistics")
-            stats_frame.pack(fill=tk.X, padx=10, pady=10)
-
-            # Create a text widget for the statistics with increased height
-            stats_text = tk.Text(stats_frame, height=20, width=150, state='disabled')
-            stats_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-            # Configure the text widget to be non-editable but allow configuration
-            stats_text.config(state='normal')
-
-            # Create a copy of the dataframe with only numeric columns
-            numeric_df = filtered_df.copy()
-            if 'department_name' in numeric_df.columns:
-                numeric_df = numeric_df.drop('department_name', axis=1)
-
-            # Convert all columns to numeric
-            for col in numeric_df.columns:
-                numeric_df[col] = pd.to_numeric(numeric_df[col], errors='coerce')
-
-            # Calculate summary statistics
-            summary_stats = numeric_df.describe().T
-            summary_stats['range'] = summary_stats['max'] - summary_stats['min']
-            summary_stats['cv'] = summary_stats['std'] / summary_stats['mean'] * 100  # Coefficient of variation
-
-            # Format and display the statistics
-            if len(self.datasets) > 1:
-                stats_text.insert(tk.END, "Feature Statistics for Combined Data:\n\n")
+                # Trigger the dropdown callback to show combined stats initially
+                on_year_change()
             else:
+                # Create a text widget for the statistics with increased height
+                stats_text = tk.Text(stats_frame, height=30, width=150, state='disabled')
+                stats_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+                # Configure the text widget to be non-editable but allow configuration
+                stats_text.config(state='normal')
+
+                # Create a copy of the dataframe with only numeric columns
+                numeric_df = filtered_df.copy()
+                if 'department_name' in numeric_df.columns:
+                    numeric_df = numeric_df.drop('department_name', axis=1)
+
+                # Convert all columns to numeric
+                for col in numeric_df.columns:
+                    numeric_df[col] = pd.to_numeric(numeric_df[col], errors='coerce')
+
+                # Calculate summary statistics
+                summary_stats = numeric_df.describe().T
+                summary_stats['range'] = summary_stats['max'] - summary_stats['min']
+                summary_stats['cv'] = summary_stats['std'] / summary_stats['mean'] * 100  # Coefficient of variation
+
+                # Format and display the statistics
                 year = next(iter(self.datasets.keys()))
                 stats_text.insert(tk.END, f"Feature Statistics for Year {year}:\n\n")
 
-            # Add description of statistical measures
-            stats_text.insert(tk.END, "Statistical Measures Explanation:\n")
-            stats_text.insert(tk.END, "  Mean: The average value of all ratings for this feature\n")
-            stats_text.insert(tk.END, "  Median: The middle value when all ratings are arranged in order\n")
-            stats_text.insert(tk.END, "  Std Dev: Standard deviation - measures how spread out the ratings are\n")
-            stats_text.insert(tk.END, "  Range: The difference between the highest and lowest rating\n")
-            stats_text.insert(tk.END, "  CV: Coefficient of Variation - relative variability as a percentage of the mean\n\n")
-            stats_text.insert(tk.END, "Feature Details:\n\n")
+                # Add description of statistical measures
+                stats_text.insert(tk.END, "Statistical Measures Explanation:\n")
+                stats_text.insert(tk.END, "  Mean: The average value of all ratings for this feature\n")
+                stats_text.insert(tk.END, "  Median: The middle value when all ratings are arranged in order\n")
+                stats_text.insert(tk.END, "  Std Dev: Standard deviation - measures how spread out the ratings are\n")
+                stats_text.insert(tk.END, "  Range: The difference between the highest and lowest rating\n")
+                stats_text.insert(tk.END, "  CV: Coefficient of Variation - relative variability as a percentage of the mean\n\n")
+                stats_text.insert(tk.END, "Feature Details:\n\n")
 
-            for feature, row in summary_stats.iterrows():
-                feature_name = feature.replace('_', ' ').title()
-                stats_text.insert(tk.END, f"{feature_name}:\n")
-                stats_text.insert(tk.END, f"  Mean: {row['mean']:.2f}\n")
-                stats_text.insert(tk.END, f"  Median: {row['50%']:.2f}\n")
-                stats_text.insert(tk.END, f"  Std Dev: {row['std']:.2f}\n")
-                stats_text.insert(tk.END, f"  Range: {row['range']:.2f}\n")
-                stats_text.insert(tk.END, f"  CV: {row['cv']:.2f}%\n\n")
+                for feature, row in summary_stats.iterrows():
+                    feature_name = feature.replace('_', ' ').title()
+                    stats_text.insert(tk.END, f"{feature_name}:\n")
+                    stats_text.insert(tk.END, f"  Mean: {row['mean']:.2f}\n")
+                    stats_text.insert(tk.END, f"  Median: {row['50%']:.2f}\n")
+                    stats_text.insert(tk.END, f"  Std Dev: {row['std']:.2f}\n")
+                    stats_text.insert(tk.END, f"  Range: {row['range']:.2f}\n")
+                    stats_text.insert(tk.END, f"  CV: {row['cv']:.2f}%\n\n")
 
-            # Make text widget read-only
-            stats_text.config(state='disabled')
+                # Make text widget read-only
+                stats_text.config(state='disabled')
 
             # Configure scroll region when plot frame changes
             def configure_scroll_region(event):
@@ -2803,134 +3380,6 @@ class AnalysisGUI:
 
         return recommendations
 
-    def plot_distribution_comparison(self, distribution_results):
-        """Plot distribution comparison with robust handling of dictionary input"""
-        try:
-            # Clear previous content
-            for widget in self.distribution_tab.winfo_children():
-                widget.destroy()
-
-            # Create a canvas with scrollbar for distribution tab
-            canvas = tk.Canvas(self.distribution_tab)
-            scrollbar = ttk.Scrollbar(self.distribution_tab, orient="vertical", command=canvas.yview)
-
-            # Create main frame inside canvas
-            main_frame = ttk.Frame(canvas)
-
-            # Configure the canvas
-            canvas.configure(yscrollcommand=scrollbar.set)
-
-            # Pack scrollbar and canvas
-            scrollbar.pack(side="right", fill="y")
-            canvas.pack(side="left", fill="both", expand=True)
-
-            # Create window in canvas
-            canvas.create_window((0, 0), window=main_frame, anchor="nw")
-
-            # Get features from the distribution results
-            features = list(distribution_results.keys())
-            if not features:
-                logging.warning("No features available for distribution plot")
-                return
-
-            # Plot for each year
-            for year, df in sorted(self.datasets.items()):
-                # Create year frame
-                year_frame = ttk.Frame(main_frame)
-                year_frame.pack(fill=tk.X, padx=5, pady=5)
-
-                # Add year label
-                year_label = ttk.Label(year_frame, text=f"Year {year}", font=('Arial', 12, 'bold'))
-                year_label.pack(pady=5)
-
-                # Create figure
-                fig = plt.Figure(figsize=(12, 8), dpi=100)
-                ax = fig.add_subplot(111)
-
-                # Position for bars
-                x = np.arange(len(features))
-                width = 0.2
-
-                # Colors for categories
-                colors = {
-                    'Needs Improvement': '#FF0000',
-                    'Moderately Satisfactory': '#FFA500',
-                    'Satisfactory': '#90EE90',
-                    'Very Satisfactory': '#00FF00'
-                }
-
-                # Calculate distribution for this year's data
-                year_distribution = {}
-                for feature in features:
-                    feature_data = pd.to_numeric(df[feature], errors='coerce')
-                    total_valid = len(feature_data.dropna())
-                    if total_valid > 0:
-                        year_distribution[feature] = {
-                            'Needs Improvement': (feature_data <= 0.74).sum() / total_valid * 100,
-                            'Moderately Satisfactory': ((feature_data > 0.74) & (feature_data <= 1.49)).sum() / total_valid * 100,
-                            'Satisfactory': ((feature_data > 1.49) & (feature_data <= 2.24)).sum() / total_valid * 100,
-                            'Very Satisfactory': (feature_data > 2.24).sum() / total_valid * 100
-                        }
-
-                # Plot bars for each feature
-                for i, feature in enumerate(features):
-                    if feature in year_distribution:
-                        feature_dist = year_distribution[feature]
-
-                        # Plot bars for each category
-                        ax.bar(x[i] - width*1.5, feature_dist['Needs Improvement'], width,
-                              label='Needs Improvement' if i == 0 else "",
-                              color=colors['Needs Improvement'], alpha=0.7)
-                        ax.bar(x[i] - width/2, feature_dist['Moderately Satisfactory'], width,
-                              label='Moderately Satisfactory' if i == 0 else "",
-                              color=colors['Moderately Satisfactory'], alpha=0.7)
-                        ax.bar(x[i] + width/2, feature_dist['Satisfactory'], width,
-                              label='Satisfactory' if i == 0 else "",
-                              color=colors['Satisfactory'], alpha=0.7)
-                        ax.bar(x[i] + width*1.5, feature_dist['Very Satisfactory'], width,
-                              label='Very Satisfactory' if i == 0 else "",
-                              color=colors['Very Satisfactory'], alpha=0.7)
-
-                # Customize plot
-                ax.set_ylabel('Percentage of Responses')
-                ax.set_title(f'Distribution of Ratings by Feature - Year {year}')
-                ax.set_xticks(x)
-                ax.set_xticklabels([f.replace('_', ' ').title() for f in features],
-                                  rotation=45, ha='right')
-
-                # Add legend
-                ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-
-                # Add grid
-                ax.grid(True, axis='y', alpha=0.3)
-
-                # Adjust layout
-                plt.tight_layout()
-
-                # Create canvas for this year's plot
-                canvas_widget = FigureCanvasTkAgg(fig, master=year_frame)
-                canvas_widget.draw()
-                canvas_widget.get_tk_widget().pack(fill=tk.X)
-
-                # Add separator
-                ttk.Separator(main_frame, orient='horizontal').pack(fill=tk.X, padx=5, pady=10)
-
-            # Configure the canvas to update scroll region when the frame changes
-            def configure_scroll_region(event):
-                canvas.configure(scrollregion=canvas.bbox("all"))
-
-            main_frame.bind('<Configure>', configure_scroll_region)
-
-            # Add mousewheel scrolling
-            def on_mousewheel(event):
-                canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-
-            canvas.bind_all("<MouseWheel>", on_mousewheel)
-
-        except Exception as e:
-            logging.error(f"Error in plot_distribution_comparison: {str(e)}")
-            messagebox.showerror("Error", f"Error creating distribution plot: {str(e)}")
-
     def calculate_baseline_metrics(self):
         """Calculate baseline metrics from the first year's data"""
         try:
@@ -3017,7 +3466,7 @@ class AnalysisGUI:
             return {}
 
     def plot_baseline_comparison(self, comparison_data):
-        """Create visualization comparing current performance with baseline"""
+        """Plot baseline comparison data"""
         try:
             # Clear existing content
             for widget in self.baseline_tab.winfo_children():
@@ -3156,23 +3605,77 @@ class AnalysisGUI:
             error_label.pack(pady=20)
 
     def plot_histograms(self):
-        """Create a more readable histogram visualization for all selected features"""
+        """Plot histograms for each selected feature"""
         try:
             # Clear previous content in histogram tab
             for widget in self.histogram_tab.winfo_children():
                 widget.destroy()
 
-            # Get filtered data
-            filtered_df = self.get_filtered_data()
+            # Create a frame for controls
+            controls_frame = ttk.Frame(self.histogram_tab)
+            controls_frame.pack(fill=tk.X, padx=10, pady=5)
+
+            # Add year selection dropdown if multiple datasets are loaded
+            selected_year = tk.StringVar()
+            if len(self.datasets) > 1:
+                year_label = ttk.Label(controls_frame, text="Select Year:")
+                year_label.pack(side=tk.LEFT, padx=(0, 5))
+
+                years = sorted(self.datasets.keys())
+                year_dropdown = ttk.Combobox(controls_frame, textvariable=selected_year,
+                                            values=years, state="readonly", width=10)
+                year_dropdown.pack(side=tk.LEFT, padx=5)
+                year_dropdown.set(years[-1])  # Default to most recent year
+
+                # Create a content frame that will be updated based on year selection
+                content_frame = ttk.Frame(self.histogram_tab)
+                content_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+                # Function to update histogram based on selected year
+                def on_year_change(event=None):
+                    # Clear the content frame
+                    for widget in content_frame.winfo_children():
+                        widget.destroy()
+
+                    year = selected_year.get()
+                    if year in self.datasets:
+                        self.create_histogram_for_year(content_frame, year)
+
+                # Bind the callback to the dropdown
+                year_dropdown.bind("<<ComboboxSelected>>", on_year_change)
+
+                # Initial plot with default year
+                on_year_change()
+            else:
+                # If only one dataset, use it directly
+                content_frame = ttk.Frame(self.histogram_tab)
+                content_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+                if self.datasets:
+                    year = list(self.datasets.keys())[0]
+                    self.create_histogram_for_year(content_frame, year)
+                else:
+                    label = ttk.Label(content_frame, text="No data available for histogram analysis.")
+                    label.pack(pady=20)
+
+        except Exception as e:
+            logging.error(f"Error in plot_histograms: {str(e)}")
+            messagebox.showerror("Error", f"Error creating histograms: {str(e)}")
+
+    def create_histogram_for_year(self, parent_frame, year):
+        """Create histogram visualization for a specific year"""
+        try:
+            # Get filtered data for the selected year
+            filtered_df = self.get_filtered_data(year)
             if filtered_df is None or filtered_df.empty:
-                label = ttk.Label(self.histogram_tab, text="No data available for histogram analysis.")
+                label = ttk.Label(parent_frame, text="No data available for histogram analysis.")
                 label.pack(pady=20)
                 return
 
             # Filter out non-numeric columns
             numeric_features = [f for f in self.selected_features if f != 'department_name']
             if not numeric_features:
-                label = ttk.Label(self.histogram_tab, text="No numeric features selected for histogram analysis.")
+                label = ttk.Label(parent_frame, text="No numeric features selected for histogram analysis.")
                 label.pack(pady=20)
                 return
 
@@ -3212,7 +3715,7 @@ class AnalysisGUI:
                     })
 
             if not data:
-                label = ttk.Label(self.histogram_tab, text="No valid data for histogram analysis.")
+                label = ttk.Label(parent_frame, text="No valid data for histogram analysis.")
                 label.pack(pady=20)
                 return
 
@@ -3233,7 +3736,7 @@ class AnalysisGUI:
                 bottom += values
 
             # Customize the plot
-            ax.set_title('Distribution of Ratings by Feature', fontsize=14)
+            ax.set_title(f'Distribution of Ratings by Feature ({year})', fontsize=14)
             ax.set_xlabel('Features', fontsize=12)
             ax.set_ylabel('Percentage of Responses', fontsize=12)
             ax.set_ylim(0, 100)
@@ -3263,17 +3766,14 @@ class AnalysisGUI:
             fig.tight_layout(rect=[0, 0.1, 1, 0.95])
 
             # Create canvas for the plot
-            canvas = FigureCanvasTkAgg(fig, master=self.histogram_tab)
+            canvas = FigureCanvasTkAgg(fig, master=parent_frame)
             canvas.draw()
             canvas_widget = canvas.get_tk_widget()
             canvas_widget.pack(fill=tk.BOTH, expand=True)
 
-            # Remove toolbar code
-            # No toolbar for cleaner UI
-
         except Exception as e:
-            logging.error(f"Error in plot_histograms: {str(e)}")
-            messagebox.showerror("Error", f"Error creating histograms: {str(e)}")
+            logging.error(f"Error in create_histogram_for_year: {str(e)}")
+            messagebox.showerror("Error", f"Error creating histograms for year {year}: {str(e)}")
 
     def plot_cluster_trends_per_year(self):
         """Create a detailed view of cluster trends for each year"""
@@ -3483,6 +3983,219 @@ class AnalysisGUI:
                 widget.destroy()
             label = ttk.Label(self.cluster_trends_tab, text=f"Error creating cluster trends per year:\n{str(e)}\n\nPlease check the log for more details.")
             label.pack(pady=20)
+
+    def plot_recommendations(self):
+        """Create recommendations visualization with year selection"""
+        try:
+            # Clear previous content in recommendations tab
+            for widget in self.recommendations_tab.winfo_children():
+                widget.destroy()
+
+            # Create a canvas with scrollbar for recommendations tab
+            canvas = tk.Canvas(self.recommendations_tab, width=1500, height=800)
+            scrollbar = ttk.Scrollbar(self.recommendations_tab, orient="vertical", command=canvas.yview)
+
+            # Create a frame inside the canvas for the recommendations
+            plot_frame = ttk.Frame(canvas, width=1500)
+
+            # Configure scrolling
+            canvas.configure(yscrollcommand=scrollbar.set)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+            # Create window in canvas
+            canvas.create_window((0, 0), window=plot_frame, anchor="nw", width=canvas.winfo_width())
+
+            # Configure the plot frame to expand to fill the canvas width
+            def configure_plot_frame(event):
+                canvas_width = event.width
+                canvas.itemconfig(canvas.find_withtag("all")[0], width=canvas_width)
+
+            canvas.bind("<Configure>", configure_plot_frame)
+
+            # Get filtered data
+            filtered_df = self.get_filtered_data()
+            if filtered_df is None or filtered_df.empty:
+                label = ttk.Label(plot_frame, text="No data available for recommendations.")
+                label.pack(pady=20)
+                return
+
+            # Create a header with dataset information
+            header_frame = ttk.Frame(plot_frame)
+            header_frame.pack(fill=tk.X, padx=10, pady=10)
+
+            if len(self.datasets) > 1:
+                header_text = f"Recommendations - Combined Data from {len(self.datasets)} Years ({', '.join(sorted(self.datasets.keys()))})"
+            else:
+                year = next(iter(self.datasets.keys()))
+                header_text = f"Recommendations - Year {year}"
+
+            header_label = ttk.Label(header_frame, text=header_text, font=("Arial", 14, "bold"))
+            header_label.pack(pady=5)
+
+            # If multiple datasets are loaded, add a dropdown to select which year to view
+            if len(self.datasets) > 1:
+                year_frame = ttk.Frame(plot_frame)
+                year_frame.pack(fill=tk.X, padx=10, pady=5)
+
+                ttk.Label(year_frame, text="Select Year:", font=("Arial", 12)).pack(side=tk.LEFT, padx=5)
+
+                year_var = tk.StringVar(value="Combined")
+                year_options = ["Combined"] + sorted(self.datasets.keys())
+                year_dropdown = ttk.Combobox(year_frame, textvariable=year_var, values=year_options, state="readonly", width=15, font=("Arial", 12))
+                year_dropdown.pack(side=tk.LEFT, padx=5)
+                year_dropdown.set("Combined")  # Default to combined view
+
+                # Create a container frame for the recommendations content
+                content_frame = ttk.Frame(plot_frame)
+                content_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+                def on_year_change(event=None):
+                    # Clear existing content
+                    for widget in content_frame.winfo_children():
+                        widget.destroy()
+
+                    # Get data for selected year
+                    selected_year = year_var.get()
+
+                    if selected_year == "Combined":
+                        # Use the combined data
+                        df_to_analyze = filtered_df
+                        year_title = "Combined Data"
+                    else:
+                        # Get data for the specific year
+                        df_to_analyze = self.datasets[selected_year]
+                        if self.current_department.get() != "All Departments":
+                            df_to_analyze = df_to_analyze[df_to_analyze['department_name'] == self.current_department.get()]
+                        year_title = f"Year {selected_year}"
+
+                    # Create recommendations for the selected year
+                    self.create_recommendations_for_year(content_frame, df_to_analyze, year_title)
+
+                # Bind the dropdown callback
+                year_dropdown.bind('<<ComboboxSelected>>', on_year_change)
+
+                # Trigger the dropdown callback to show combined recommendations initially
+                on_year_change()
+            else:
+                # If only one year, display recommendations directly
+                content_frame = ttk.Frame(plot_frame)
+                content_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+                year = next(iter(self.datasets.keys()))
+                self.create_recommendations_for_year(content_frame, filtered_df, f"Year {year}")
+
+            # Configure scroll region when plot frame changes
+            def configure_scroll_region(event):
+                canvas.configure(scrollregion=canvas.bbox("all"))
+
+            plot_frame.bind('<Configure>', configure_scroll_region)
+
+            # Add mousewheel scrolling
+            def on_mousewheel(event):
+                canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+
+            canvas.bind_all("<MouseWheel>", on_mousewheel)
+
+        except Exception as e:
+            logging.error(f"Error in plot_recommendations: {str(e)}")
+            for widget in self.recommendations_tab.winfo_children():
+                widget.destroy()
+            label = ttk.Label(self.recommendations_tab, text=f"Error generating recommendations: {str(e)}")
+            label.pack(pady=20)
+
+    def create_recommendations_for_year(self, parent_frame, df, title):
+        """Create recommendations for a specific year"""
+        try:
+            # Create a title for the recommendations
+            title_label = ttk.Label(parent_frame, text=f"Recommendations for {title}", font=("Arial", 12, "bold"))
+            title_label.pack(pady=5)
+
+            # Create recommendations text widget
+            recommendations_text = scrolledtext.ScrolledText(parent_frame, wrap=tk.WORD, height=30, font=("Arial", 11))
+            recommendations_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+            # Calculate average scores for each feature
+            numeric_df = df.copy()
+            if 'department_name' in numeric_df.columns:
+                numeric_df = numeric_df.drop('department_name', axis=1)
+
+            # Convert all columns to numeric
+            for col in numeric_df.columns:
+                numeric_df[col] = pd.to_numeric(numeric_df[col], errors='coerce')
+
+            # Calculate average scores
+            avg_scores = numeric_df.mean()
+
+            # Identify low and high scoring features
+            needs_improvement = avg_scores[avg_scores < 1.5]  # Below 1.5 on 0-3 scale
+            very_satisfactory = avg_scores[avg_scores >= 2.25]  # Above 2.25 on 0-3 scale
+
+            # Generate standard recommendations based on low scores
+            standard_recommendations = generate_event_recommendations(needs_improvement)
+
+            # Generate maintenance recommendations for high scores
+            maintenance_recommendations = generate_event_maintenance_recommendations(very_satisfactory)
+
+            # Generate dynamic recommendations
+            dynamic_recommendations = self.generate_dynamic_recommendations(
+                numeric_df, needs_improvement, very_satisfactory
+            )
+
+            # Display recommendations
+            recommendations_text.insert(tk.END, "IMPROVEMENT RECOMMENDATIONS:\n\n")
+
+            if standard_recommendations:
+                for feature, recs in standard_recommendations.items():
+                    feature_name = feature.replace('_', ' ').title()
+                    recommendations_text.insert(tk.END, f"{feature_name}:\n")
+
+                    for rec in recs:
+                        recommendations_text.insert(tk.END, f"• {rec['text']}\n")
+                        recommendations_text.insert(tk.END, f"  Action: {rec['action']}\n\n")
+            else:
+                recommendations_text.insert(tk.END, "No improvement recommendations identified.\n\n")
+
+            # Add dynamic recommendations
+            recommendations_text.insert(tk.END, "\nDETAILED RECOMMENDATIONS:\n\n")
+
+            if dynamic_recommendations:
+                has_recommendations = False
+                for feature, recs in dynamic_recommendations.items():
+                    if recs:  # Only show features with recommendations
+                        has_recommendations = True
+                        feature_name = feature.replace('_', ' ').title()
+                        recommendations_text.insert(tk.END, f"{feature_name}:\n")
+
+                        for rec in recs:
+                            recommendations_text.insert(tk.END, f"• {rec['text']} (Priority: {rec['priority']})\n")
+                            recommendations_text.insert(tk.END, f"  {rec['action']}\n\n")
+
+                if not has_recommendations:
+                    recommendations_text.insert(tk.END, "No detailed recommendations identified.\n\n")
+            else:
+                recommendations_text.insert(tk.END, "No detailed recommendations identified.\n\n")
+
+            # Add maintenance recommendations
+            recommendations_text.insert(tk.END, "\nMAINTENANCE RECOMMENDATIONS:\n\n")
+
+            if maintenance_recommendations:
+                for feature, recs in maintenance_recommendations.items():
+                    feature_name = feature.replace('_', ' ').title()
+                    recommendations_text.insert(tk.END, f"{feature_name}:\n")
+
+                    for rec in recs:
+                        recommendations_text.insert(tk.END, f"• {rec['text']}\n")
+                        recommendations_text.insert(tk.END, f"  Action: {rec['action']}\n\n")
+            else:
+                recommendations_text.insert(tk.END, "No maintenance recommendations identified.\n\n")
+
+            # Make text read-only
+            recommendations_text.config(state='disabled')
+
+        except Exception as e:
+            logging.error(f"Error creating recommendations for {title}: {str(e)}")
+            ttk.Label(parent_frame, text=f"Error creating recommendations for {title}: {str(e)}").pack(pady=20)
 
 def interpret_ratings(avg_scores):
     """
