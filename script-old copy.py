@@ -13,7 +13,7 @@ import networkx as nx
 from kneed import KneeLocator
 from sklearn.decomposition import PCA
 import logging
-from sklearn.metrics import silhouette_score
+from sklearn.metrics import silhouette_score  
 from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
 import time
 
@@ -795,51 +795,8 @@ class AnalysisGUI:
                 }
             }
 
-            # Define color scheme and fonts
-            self.colors = {
-                'primary': '#1a73e8',       # Main blue color
-                'secondary': '#4285f4',     # Secondary blue
-                'success': '#0f9d58',       # Green for success
-                'warning': '#f4b400',       # Yellow for warnings
-                'danger': '#db4437',        # Red for errors
-                'light_bg': '#f8f9fa',      # Light background
-                'dark_bg': '#202124',       # Dark background
-                'text': '#3c4043',          # Text color
-                'light_text': '#5f6368',    # Secondary text
-                'highlight': '#e8f0fe'      # Highlight background
-            }
-
-            # Fonts
-            self.fonts = {
-                'heading': ('Segoe UI', 12, 'bold'),
-                'subheading': ('Segoe UI', 11, 'bold'),
-                'body': ('Segoe UI', 10),
-                'small': ('Segoe UI', 9),
-                'code': ('Consolas', 10)
-            }
-
             self.root = root
-            self.root.title("Event Analysis Dashboard")
-
-            # Apply a theme if ttk style is available
-            self.style = ttk.Style()
-            try:
-                # Try to set a modern theme if available
-                import ttkthemes
-                self.style = ttkthemes.ThemedStyle(self.root)
-                self.style.set_theme("arc")  # Modern clean theme
-            except ImportError:
-                # Fall back to clam theme which is available in standard ttk
-                self.style.theme_use('clam')
-
-            # Configure common styles
-            self.style.configure('TButton', font=self.fonts['body'], padding=6)
-            self.style.configure('TLabel', font=self.fonts['body'])
-            self.style.configure('Heading.TLabel', font=self.fonts['heading'])
-            self.style.configure('Subheading.TLabel', font=self.fonts['subheading'])
-            self.style.configure('Action.TButton', foreground=self.colors['primary'])
-            self.style.configure('Success.TButton', foreground=self.colors['success'])
-            self.style.configure('Warning.TButton', foreground=self.colors['warning'])
+            self.root.title("Event Analysis Tool")
 
             # Make the window fullscreen
             self.root.state('zoomed')  # For Windows
@@ -847,45 +804,28 @@ class AnalysisGUI:
             # self.root.attributes('-zoomed', True)
 
             # Set minimum window size
-            self.root.minsize(1200, 800)
-
-            # Set application icon if available
-            try:
-                self.root.iconbitmap('app_icon.ico')  # You'll need to create this icon file
-            except:
-                pass  # Continue if icon not found
-
-            # Create main containers with consistent padding
-            self.main_frame = ttk.Frame(self.root, padding="10 10 10 10")
-            self.main_frame.pack(expand=True, fill=tk.BOTH)
-
-            # Create header with title and department filter
-            self.header_frame = ttk.Frame(self.main_frame)
-            self.header_frame.pack(fill=tk.X, pady=(0, 10))
-
-            # App title
-            title_label = ttk.Label(self.header_frame, text="Event Analysis Dashboard", style='Heading.TLabel')
-            title_label.pack(side=tk.LEFT, padx=(0, 20))
-
-            # Create department filter frame
-            self.create_department_filter()
+            self.root.minsize(1024, 768)
 
             # Create navigation bar
             self.create_navigation()
 
-            # Create notebook for tabs with improved styling
-            self.tab_control = ttk.Notebook(self.main_frame)
-            self.tab_control.pack(expand=True, fill=tk.BOTH)
+            # Create department filter frame
+            self.create_department_filter()
+
+            # Create notebook for tabs
+            self.tab_control = ttk.Notebook(self.root)
+            self.tab_control.pack(expand=True, fill=tk.BOTH, padx=5, pady=5)
 
             # Initialize tabs
-            self.output_tab = ttk.Frame(self.tab_control, padding=10)
-            self.cluster_tab = ttk.Frame(self.tab_control, padding=10)
-            self.rules_tab = ttk.Frame(self.tab_control, padding=10)
-            self.descriptive_tab = ttk.Frame(self.tab_control, padding=10)
-            self.histogram_tab = ttk.Frame(self.tab_control, padding=10)
-            self.recommendations_tab = ttk.Frame(self.tab_control, padding=10)
-            self.baseline_tab = ttk.Frame(self.tab_control, padding=10)
-            self.cluster_trends_tab = ttk.Frame(self.tab_control, padding=10)  # Add new tab for cluster trends per year
+            self.output_tab = ttk.Frame(self.tab_control)
+            self.cluster_tab = ttk.Frame(self.tab_control)
+            self.rules_tab = ttk.Frame(self.tab_control)
+            self.descriptive_tab = ttk.Frame(self.tab_control)
+            self.histogram_tab = ttk.Frame(self.tab_control)
+            # self.distribution_tab = ttk.Frame(self.tab_control)  # Removed distribution tab
+            self.recommendations_tab = ttk.Frame(self.tab_control)
+            self.baseline_tab = ttk.Frame(self.tab_control)
+            self.cluster_trends_tab = ttk.Frame(self.tab_control)  # Add new tab for cluster trends per year
 
             # Add tabs to notebook
             self.tab_control.add(self.output_tab, text='Analysis Results')
@@ -893,55 +833,17 @@ class AnalysisGUI:
             self.tab_control.add(self.rules_tab, text='Association Rules')
             self.tab_control.add(self.descriptive_tab, text='Descriptive Stats')
             self.tab_control.add(self.histogram_tab, text='Histograms')
+            # self.tab_control.add(self.distribution_tab, text='Distribution')  # Removed distribution tab
             self.tab_control.add(self.recommendations_tab, text='Recommendations')
             self.tab_control.add(self.baseline_tab, text='Baseline Comparisons')
-            self.tab_control.add(self.cluster_trends_tab, text='Cluster Trends Per Year')
+            self.tab_control.add(self.cluster_trends_tab, text='Cluster Trends Per Year')  # Add new tab
 
-            # Create styled text widgets for output and recommendations
-            # With better fonts and colors
-            self.output_text = scrolledtext.ScrolledText(
-                self.output_tab,
-                height=30,
-                font=self.fonts['body'],
-                background=self.colors['light_bg'],
-                foreground=self.colors['text'],
-                padx=10,
-                pady=10,
-                wrap=tk.WORD
-            )
-            self.output_text.pack(fill=tk.BOTH, expand=True)
+            # Create scrolled text widgets for output and recommendations
+            self.output_text = scrolledtext.ScrolledText(self.output_tab, height=30)
+            self.output_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-            # Configure tags for styled text
-            self.output_text.tag_configure('heading', font=self.fonts['heading'], foreground=self.colors['primary'])
-            self.output_text.tag_configure('subheading', font=self.fonts['subheading'], foreground=self.colors['secondary'])
-            self.output_text.tag_configure('normal', font=self.fonts['body'])
-            self.output_text.tag_configure('success', foreground=self.colors['success'])
-            self.output_text.tag_configure('warning', foreground=self.colors['warning'])
-            self.output_text.tag_configure('error', foreground=self.colors['danger'])
-            self.output_text.tag_configure('highlight', background=self.colors['highlight'])
-            self.output_text.tag_configure('code', font=self.fonts['code'], background='#f0f0f0')
-
-            self.recommendations_text = scrolledtext.ScrolledText(
-                self.recommendations_tab,
-                height=30,
-                font=self.fonts['body'],
-                background=self.colors['light_bg'],
-                foreground=self.colors['text'],
-                padx=10,
-                pady=10,
-                wrap=tk.WORD
-            )
-            self.recommendations_text.pack(fill=tk.BOTH, expand=True)
-
-            # Configure the same tags for recommendations text
-            self.recommendations_text.tag_configure('heading', font=self.fonts['heading'], foreground=self.colors['primary'])
-            self.recommendations_text.tag_configure('subheading', font=self.fonts['subheading'], foreground=self.colors['secondary'])
-            self.recommendations_text.tag_configure('normal', font=self.fonts['body'])
-            self.recommendations_text.tag_configure('success', foreground=self.colors['success'])
-            self.recommendations_text.tag_configure('warning', foreground=self.colors['warning'])
-            self.recommendations_text.tag_configure('error', foreground=self.colors['danger'])
-            self.recommendations_text.tag_configure('highlight', background=self.colors['highlight'])
-            self.recommendations_text.tag_configure('code', font=self.fonts['code'], background='#f0f0f0')
+            self.recommendations_text = scrolledtext.ScrolledText(self.recommendations_tab, height=30)
+            self.recommendations_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
             print("AnalysisGUI initialized successfully.")
 
@@ -951,54 +853,15 @@ class AnalysisGUI:
 
     def create_department_filter(self):
         """Create the department filter dropdown"""
-        # Create a styled frame for the department filter in the header
-        filter_frame = ttk.Frame(self.header_frame)
-        filter_frame.pack(side=tk.RIGHT, fill=tk.Y)
+        filter_frame = ttk.Frame(self.root)
+        filter_frame.pack(fill=tk.X, padx=5, pady=2)
 
-        # Create filter container with subtle border
-        filter_container = ttk.Frame(filter_frame, style='Card.TFrame')
-        filter_container.pack(side=tk.RIGHT, padx=5, pady=2)
+        # Create label
+        ttk.Label(filter_frame, text="Filter by Department:").pack(side=tk.LEFT, padx=5)
 
-        # Add a filter icon (optional - using Unicode character)
-        filter_icon = ttk.Label(filter_container, text="🔍", font=('Segoe UI', 11))
-        filter_icon.pack(side=tk.LEFT, padx=(5, 0))
-
-        # Create label with better styling
-        dept_label = ttk.Label(filter_container, text="Department:", style='Subheading.TLabel')
-        dept_label.pack(side=tk.LEFT, padx=5)
-
-        # Create department dropdown with better styling
-        self.department_dropdown = ttk.Combobox(
-            filter_container,
-            textvariable=self.current_department,
-            width=25,
-            font=self.fonts['body'],
-            state="readonly"  # Prevents users from entering invalid values
-        )
+        # Create department dropdown
+        self.department_dropdown = ttk.Combobox(filter_frame, textvariable=self.current_department)
         self.department_dropdown.pack(side=tk.LEFT, padx=5)
-
-        # Add a refresh button
-        refresh_btn = ttk.Button(
-            filter_container,
-            text="↻",
-            width=3,
-            command=self.update_department_list,
-            style='Action.TButton'
-        )
-        refresh_btn.pack(side=tk.LEFT, padx=5)
-
-        # Add tooltip to explain what the refresh button does
-        # This is a basic implementation - consider using a proper tooltip library
-        def show_refresh_tooltip(event):
-            tooltip = tk.Toplevel(self.root)
-            tooltip.wm_overrideredirect(True)
-            tooltip.geometry(f"+{event.x_root+10}+{event.y_root+10}")
-            ttk.Label(tooltip, text="Refresh department list",
-                     background=self.colors['highlight'],
-                     padding=5).pack()
-            tooltip.after(2000, tooltip.destroy)  # Auto-destroy after 2 seconds
-
-        refresh_btn.bind("<Enter>", show_refresh_tooltip)
 
         # Bind department change event
         self.department_dropdown.bind('<<ComboboxSelected>>', self.on_department_change)
@@ -1021,14 +884,11 @@ class AnalysisGUI:
             # Get filtered data based on department selection
             filtered_df = self.get_filtered_data()
 
-            # Make sure our critical widgets exist and are properly configured
-            self.ensure_widgets_exist()
-
-            # Clear the content of text widgets
+            # Clear previous output
             self.output_text.delete(1.0, tk.END)
             self.recommendations_text.delete(1.0, tk.END)
 
-            # Clear previous visualizations - careful not to disrupt our text widgets
+            # Clear previous visualizations
             for tab in [self.cluster_tab, self.histogram_tab,
                        self.rules_tab, self.descriptive_tab, self.baseline_tab,
                        self.cluster_trends_tab]:  # Removed distribution_tab
@@ -1207,134 +1067,35 @@ class AnalysisGUI:
 
                 if not rules.empty:
                     # Display association rules interpretation
-                    self.output_text.insert(tk.END, "\nAssociation Rules Analysis:\n", 'heading')
+                    self.output_text.insert(tk.END, "\nAssociation Rules Analysis:\n")
                     self.output_text.insert(tk.END, interpret_event_association_rules(rules))
 
                     # Plot association rules
                     self.plot_association_rules(rules, self.current_department.get())
                 else:
-                    # Clear any previous content in this section
-                    self.output_text.insert(tk.END, "\n", 'normal')
+                    self.output_text.insert(tk.END, "\nNo significant association rules found after multiple attempts.\n")
+                    self.output_text.insert(tk.END, "Possible reasons:\n")
+                    self.output_text.insert(tk.END, "1. Data is too sparse or has insufficient patterns\n")
+                    self.output_text.insert(tk.END, "2. Selected features don't have strong associations\n")
+                    self.output_text.insert(tk.END, "3. Sample size is too small after filtering\n")
+                    self.output_text.insert(tk.END, "4. Rating distributions are too uniform\n")
+                    self.output_text.insert(tk.END, "\nTry the following:\n")
+                    self.output_text.insert(tk.END, "- Select different or more features\n")
+                    self.output_text.insert(tk.END, "- Include more data or different departments\n")
+                    self.output_text.insert(tk.END, "- Check for data quality issues\n")
 
-                    # Create a visually distinct message for no rules found
-                    self.output_text.insert(tk.END, "⚠️ No Significant Association Rules Found\n", 'heading')
-                    self.output_text.insert(tk.END, "We attempted to find association rules with multiple thresholds but couldn't find any significant patterns.\n\n", 'normal')
-
-                    # Display possible reasons with better formatting
-                    self.output_text.insert(tk.END, "Possible Reasons:\n", 'subheading')
-                    self.output_text.insert(tk.END, "• ", 'normal')
-                    self.output_text.insert(tk.END, "Data is too sparse or has insufficient patterns\n", 'normal')
-                    self.output_text.insert(tk.END, "• ", 'normal')
-                    self.output_text.insert(tk.END, "Selected features don't exhibit strong associations\n", 'normal')
-                    self.output_text.insert(tk.END, "• ", 'normal')
-                    self.output_text.insert(tk.END, "Sample size is too small after filtering\n", 'normal')
-                    self.output_text.insert(tk.END, "• ", 'normal')
-                    self.output_text.insert(tk.END, "Rating distributions are too uniform\n", 'normal')
-
-                    # Add a separator line
-                    self.output_text.insert(tk.END, "\n" + "─" * 50 + "\n\n", 'light_text')
-
-                    # Display recommendations with better formatting
-                    self.output_text.insert(tk.END, "Suggested Actions:\n", 'subheading')
-                    self.output_text.insert(tk.END, "• ", 'normal')
-                    self.output_text.insert(tk.END, "Select different or more relevant features\n", 'normal')
-                    self.output_text.insert(tk.END, "• ", 'normal')
-                    self.output_text.insert(tk.END, "Include more data or try different departments\n", 'normal')
-                    self.output_text.insert(tk.END, "• ", 'normal')
-                    self.output_text.insert(tk.END, "Check for data quality issues in your dataset\n", 'normal')
-                    self.output_text.insert(tk.END, "• ", 'normal')
-                    self.output_text.insert(tk.END, "Try the relaxed parameters option below\n", 'normal')
-
-                    # Add a visible separator before the retry section
-                    self.output_text.insert(tk.END, "\n", 'normal')
-
-                    # Create a better frame for the retry option
-                    retry_frame = ttk.Frame(self.output_tab, style='Card.TFrame')
-                    retry_frame.pack(fill=tk.X, padx=20, pady=10)
-
-                    # Add an info label with explanation
-                    info_label = ttk.Label(
-                        retry_frame,
-                        text="Try with extremely relaxed parameters to find any possible patterns",
-                        style='Subheading.TLabel',
-                        padding=(10, 10, 10, 5)
-                    )
-                    info_label.pack(fill=tk.X)
-
-                    # Add a descriptive text
-                    ttk.Label(
-                        retry_frame,
-                        text="This will use much lower thresholds for support and confidence,\nwhich may reveal weaker patterns but could include more noise.",
-                        padding=(10, 0, 10, 10),
-                        foreground=self.colors['light_text']
-                    ).pack(fill=tk.X)
-
-                    # Create a button container for better layout
-                    button_container = ttk.Frame(retry_frame)
-                    button_container.pack(fill=tk.X, padx=10, pady=10)
-
-                    # Create a styled retry button
-                    retry_btn = ttk.Button(
-                        button_container,
-                        text="Try Relaxed Parameters",
-                        style='Warning.TButton',
-                        command=try_relaxed_parameters,
-                        padding=(10, 5)
-                    )
-                    retry_btn.pack(side=tk.LEFT, padx=5)
-
-                    # Add a cancel button option
-                    cancel_btn = ttk.Button(
-                        button_container,
-                        text="Skip This Step",
-                        command=lambda: retry_frame.destroy(),
-                        padding=(10, 5)
-                    )
-                    cancel_btn.pack(side=tk.LEFT, padx=5)
-
-                    # Add a help button with explanation
-                    help_btn = ttk.Button(
-                        button_container,
-                        text="Help",
-                        width=8,
-                        command=lambda: messagebox.showinfo(
-                            "About Relaxed Parameters",
-                            "Using relaxed parameters lowers the thresholds for finding patterns.\n\n"
-                            "This may help discover weak associations that wouldn't meet the "
-                            "normal quality criteria, but be cautious about drawing strong "
-                            "conclusions from these results as they may include coincidental "
-                            "patterns."
-                        )
-                    )
-                    help_btn.pack(side=tk.RIGHT, padx=5)
+                    # Add a button to try with very relaxed parameters
+                    retry_frame = ttk.Frame(self.output_tab)
+                    retry_frame.pack(fill=tk.X, padx=10, pady=5)
 
                     def try_relaxed_parameters():
-                        self.output_text.insert(tk.END, "\nTrying with extremely relaxed parameters...\n", 'normal')
+                        self.output_text.insert(tk.END, "\nTrying with extremely relaxed parameters...\n")
                         self.output_text.update()
 
-                        # Create progress indicator with label
-                        progress_frame = ttk.Frame(retry_frame)
-                        progress_frame.pack(fill=tk.X, padx=10, pady=5)
-
-                        # Add a progress label
-                        progress_label = ttk.Label(
-                            progress_frame,
-                            text="Processing with lower thresholds...",
-                            foreground=self.colors['secondary']
-                        )
-                        progress_label.pack(fill=tk.X, pady=(0, 5))
-
-                        # Create a better progress bar
-                        retry_progress = ttk.Progressbar(
-                            progress_frame,
-                            mode='indeterminate',
-                            length=300
-                        )
-                        retry_progress.pack(fill=tk.X)
+                        # Create progress indicator
+                        retry_progress = ttk.Progressbar(retry_frame, mode='indeterminate')
+                        retry_progress.pack(fill=tk.X, pady=2)
                         retry_progress.start(10)
-
-                        # Update UI to show progress is happening
-                        button_container.pack_forget()  # Hide buttons during processing
                         self.root.update()
 
                         # Try with extremely relaxed parameters
@@ -1342,15 +1103,15 @@ class AnalysisGUI:
                             binary_df,
                             min_support=0.01,  # Very low support
                             min_confidence=0.1,  # Very low confidence
-                            min_lift=1.01,  # Very low lift
-                            max_len=3,
-                            use_parallel=use_parallel
+                            min_lift=0.5,      # Accept even slightly negative correlations
+                            max_len=2,         # Only look for pairs to simplify
+                            use_parallel=True
+                            # n_jobs parameter removed as it's not supported
                         )
 
-                        # Clean up progress indicators
+                        # Stop progress
                         retry_progress.stop()
-                        progress_frame.destroy()  # Remove the entire progress frame
-                        button_container.pack(fill=tk.X, padx=10, pady=10)  # Restore buttons
+                        retry_progress.destroy()
 
                         if not relaxed_rules.empty:
                             self.output_text.insert(tk.END, f"\nFound {len(relaxed_rules)} rules with relaxed parameters.\n")
@@ -1533,8 +1294,6 @@ class AnalysisGUI:
     def on_department_change(self, event=None):
         """Handle department selection change"""
         if hasattr(self, 'df') and self.df is not None:
-            # Ensure widgets exist before running analysis that interacts with them
-            self.ensure_widgets_exist()
             self.run_analysis()  # Changed from update_analysis to run_analysis
 
     def update_department_list(self):
@@ -1577,181 +1336,53 @@ class AnalysisGUI:
 
     def create_navigation(self):
         """Create a navigation bar at the top of the window"""
-        # Create a main navigation frame with a subtle background
-        nav_frame = ttk.Frame(self.main_frame, style='Nav.TFrame')
-        nav_frame.pack(fill=tk.X, pady=(0, 10))
+        nav_frame = ttk.Frame(self.root)
+        nav_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # Create a toolbar style for the navigation
-        self.style.configure('Nav.TFrame', background=self.colors['light_bg'])
-        self.style.configure('NavButton.TButton', font=self.fonts['body'], padding=(12, 6))
-        self.style.configure('ActionButton.TButton', font=self.fonts['body'], padding=(12, 6),
-                           background=self.colors['primary'], foreground='white')
-
-        # Add a subtle border at the bottom
-        border_frame = ttk.Frame(self.main_frame, height=1, style='Border.TFrame')
-        self.style.configure('Border.TFrame', background=self.colors['light_text'])
-        border_frame.pack(fill=tk.X, pady=(0, 10))
-
-        # Create left frame for main controls with better spacing
-        left_frame = ttk.Frame(nav_frame, style='Nav.TFrame')
-        left_frame.pack(side=tk.LEFT, fill=tk.X, padx=5, pady=5)
+        # Create left frame for main controls
+        left_frame = ttk.Frame(nav_frame)
+        left_frame.pack(side=tk.LEFT, fill=tk.X)
 
         # Create right frame for thresholds
-        right_frame = ttk.Frame(nav_frame, style='Nav.TFrame')
-        right_frame.pack(side=tk.RIGHT, fill=tk.X, padx=5, pady=5)
+        right_frame = ttk.Frame(nav_frame)
+        right_frame.pack(side=tk.RIGHT, fill=tk.X)
 
-        # Create button groups with visual separation
-        data_group = ttk.LabelFrame(left_frame, text="Data", padding=(5, 2, 5, 5))
-        data_group.pack(side=tk.LEFT, padx=(0, 10), fill=tk.Y)
-
-        analysis_group = ttk.LabelFrame(left_frame, text="Analysis", padding=(5, 2, 5, 5))
-        analysis_group.pack(side=tk.LEFT, padx=(0, 10), fill=tk.Y)
-
-        # Main control buttons with icons and better styling
-        # Data group buttons
+        # Main control buttons (left side)
         load_btn = ttk.Button(
-            data_group,
-            text="📂 Load Data",
+            left_frame,
+            text="Load Data",
             command=self.load_data,
-            style='NavButton.TButton',
             width=15
         )
-        load_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        load_btn.pack(side=tk.LEFT, padx=2)
 
         clear_btn = ttk.Button(
-            data_group,
-            text="🗑️ Clear Data",
+            left_frame,
+            text="Clear Data",
             command=self.clear_datasets,
-            style='NavButton.TButton',
             width=15
         )
-        clear_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        clear_btn.pack(side=tk.LEFT, padx=2)
 
-        # Analysis group buttons
         select_features_btn = ttk.Button(
-            analysis_group,
-            text="✓ Select Features",
+            left_frame,
+            text="Select Features",
             command=self.select_features_window,
-            style='NavButton.TButton',
             width=15
         )
-        select_features_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        select_features_btn.pack(side=tk.LEFT, padx=2)
 
         analyze_btn = ttk.Button(
-            analysis_group,
-            text="▶ Run Analysis",
+            left_frame,
+            text="Run Analysis",
             command=self.run_analysis,
-            style='ActionButton.TButton',
             width=15
         )
-        analyze_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        analyze_btn.pack(side=tk.LEFT, padx=2)
 
-        # Add tooltips to buttons
-        self.create_tooltip(load_btn, "Load event data files")
-        self.create_tooltip(clear_btn, "Clear all loaded datasets")
-        self.create_tooltip(select_features_btn, "Select features for analysis")
-        self.create_tooltip(analyze_btn, "Run the complete analysis workflow")
-
-    def create_tooltip(self, widget, text):
-        """Create a tooltip for a widget"""
-        def enter(event):
-            # Create a tooltip window
-            tooltip = tk.Toplevel(widget)
-            tooltip.wm_overrideredirect(True)
-            tooltip.geometry(f"+{event.x_root+10}+{event.y_root+10}")
-
-            # Create the tooltip content
-            label = ttk.Label(
-                tooltip,
-                text=text,
-                background=self.colors['highlight'],
-                foreground=self.colors['text'],
-                padding=5,
-                wraplength=200
-            )
-            label.pack()
-
-            # Store the tooltip to destroy it later
-            widget.tooltip = tooltip
-
-            # Auto-destroy after some time
-            widget.after(2000, lambda: tooltip.destroy() if hasattr(widget, 'tooltip') else None)
-
-        def leave(event):
-            # Destroy the tooltip when the mouse leaves
-            if hasattr(widget, 'tooltip'):
-                widget.tooltip.destroy()
-                del widget.tooltip
-
-        # Bind events
-        widget.bind("<Enter>", enter)
-        widget.bind("<Leave>", leave)
-
-    def ensure_widgets_exist(self):
-        """Helper method to ensure critical widgets exist and are properly configured"""
-        # Check output_text widget
-        try:
-            if not hasattr(self, 'output_text') or not self.output_text.winfo_exists():
-                # Create or recreate output_text
-                for widget in self.output_tab.winfo_children():
-                    widget.destroy()
-
-                self.output_text = scrolledtext.ScrolledText(
-                    self.output_tab,
-                    height=30,
-                    font=self.fonts['body'],
-                    background=self.colors['light_bg'],
-                    foreground=self.colors['text'],
-                    padx=10,
-                    pady=10,
-                    wrap=tk.WORD
-                )
-                self.output_text.pack(fill=tk.BOTH, expand=True)
-
-                # Configure tags
-                self.output_text.tag_configure('heading', font=self.fonts['heading'], foreground=self.colors['primary'])
-                self.output_text.tag_configure('subheading', font=self.fonts['subheading'], foreground=self.colors['secondary'])
-                self.output_text.tag_configure('normal', font=self.fonts['body'])
-                self.output_text.tag_configure('success', foreground=self.colors['success'])
-                self.output_text.tag_configure('warning', foreground=self.colors['warning'])
-                self.output_text.tag_configure('error', foreground=self.colors['danger'])
-                self.output_text.tag_configure('highlight', background=self.colors['highlight'])
-                self.output_text.tag_configure('code', font=self.fonts['code'], background='#f0f0f0')
-                self.output_text.tag_configure('light_text', foreground=self.colors['light_text'])
-        except Exception as e:
-            logging.error(f"Error ensuring output_text exists: {str(e)}")
-
-        # Check recommendations_text widget
-        try:
-            if not hasattr(self, 'recommendations_text') or not self.recommendations_text.winfo_exists():
-                # Create or recreate recommendations_text
-                for widget in self.recommendations_tab.winfo_children():
-                    widget.destroy()
-
-                self.recommendations_text = scrolledtext.ScrolledText(
-                    self.recommendations_tab,
-                    height=30,
-                    font=self.fonts['body'],
-                    background=self.colors['light_bg'],
-                    foreground=self.colors['text'],
-                    padx=10,
-                    pady=10,
-                    wrap=tk.WORD
-                )
-                self.recommendations_text.pack(fill=tk.BOTH, expand=True)
-
-                # Configure tags
-                self.recommendations_text.tag_configure('heading', font=self.fonts['heading'], foreground=self.colors['primary'])
-                self.recommendations_text.tag_configure('subheading', font=self.fonts['subheading'], foreground=self.colors['secondary'])
-                self.recommendations_text.tag_configure('normal', font=self.fonts['body'])
-                self.recommendations_text.tag_configure('success', foreground=self.colors['success'])
-                self.recommendations_text.tag_configure('warning', foreground=self.colors['warning'])
-                self.recommendations_text.tag_configure('error', foreground=self.colors['danger'])
-                self.recommendations_text.tag_configure('highlight', background=self.colors['highlight'])
-                self.recommendations_text.tag_configure('code', font=self.fonts['code'], background='#f0f0f0')
-                self.recommendations_text.tag_configure('light_text', foreground=self.colors['light_text'])
-        except Exception as e:
-            logging.error(f"Error ensuring recommendations_text exists: {str(e)}")
+        # Add separator below navigation
+        separator = ttk.Separator(self.root, orient='horizontal')
+        separator.pack(fill=tk.X, padx=5, pady=5)
 
     def clear_datasets(self):
         """Clear all loaded datasets and reset the GUI"""
@@ -1797,22 +1428,33 @@ class AnalysisGUI:
         viz_frame = ttk.LabelFrame(self.right_frame, text="Visualizations", padding="10")
         viz_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Store a reference to the viz_frame for later use
-        self.viz_frame = viz_frame
+        # Create tabs for different plots
+        self.tab_control = ttk.Notebook(viz_frame)
 
-        # The tab_control is already created in __init__,
-        # so we'll just make sure it's properly displayed in the main window
-        # No need to create it again here
+        self.descriptive_tab = ttk.Frame(self.tab_control)
+        self.cluster_tab = ttk.Frame(self.tab_control)
+        # self.distribution_tab = ttk.Frame(self.tab_control)  # Removed distribution tab
+        self.histogram_tab = ttk.Frame(self.tab_control)
+        self.rules_tab = ttk.Frame(self.tab_control)
+        self.output_tab = ttk.Frame(self.tab_control)
+        self.recommendations_tab = ttk.Frame(self.tab_control)  # Add recommendations tab
 
-        # Add a note about visualizations
-        note_label = ttk.Label(
-            viz_frame,
-            text="Visualizations will appear in the tabs above when you run the analysis.",
-            foreground=self.colors['light_text'],
-            wraplength=400,
-            justify='center'
-        )
-        note_label.pack(pady=20)
+        self.tab_control.add(self.descriptive_tab, text='Descriptive Analysis')
+        self.tab_control.add(self.cluster_tab, text='Clustering')
+        # self.tab_control.add(self.distribution_tab, text='Distribution')  # Removed distribution tab
+        self.tab_control.add(self.histogram_tab, text='Histograms')
+        self.tab_control.add(self.rules_tab, text='Association Rules')
+        self.tab_control.add(self.output_tab, text='Analysis Results')
+        self.tab_control.add(self.recommendations_tab, text='Recommendations')  # Add recommendations tab
+
+        self.tab_control.pack(fill=tk.BOTH, expand=True)
+
+        # Create scrolled text widgets for both analysis and recommendations tabs
+        self.output_text = scrolledtext.ScrolledText(self.output_tab, wrap=tk.WORD, height=20)
+        self.output_text.pack(fill=tk.BOTH, expand=True)
+
+        self.recommendations_text = scrolledtext.ScrolledText(self.recommendations_tab, wrap=tk.WORD, height=20)
+        self.recommendations_text.pack(fill=tk.BOTH, expand=True)
 
     def load_data(self):
         print("Starting load_data method")  # Debug print
@@ -4376,104 +4018,73 @@ class AnalysisGUI:
     def plot_recommendations(self):
         """Create recommendations visualization with year selection"""
         try:
-            # Make sure our widgets exist and are properly configured
-            self.ensure_widgets_exist()
-
-            # Clear previous content in recommendations tab but be careful not to destroy
-            # the recommendations_text widget that's referenced elsewhere
-            # First check if recommendations_text is a child of recommendations_tab
-            tab_has_rec_text = False
+            # Clear previous content in recommendations tab
             for widget in self.recommendations_tab.winfo_children():
-                if widget == self.recommendations_text:
-                    tab_has_rec_text = True
-                else:
-                    widget.destroy()
+                widget.destroy()
 
-            # If the recommendations_text widget isn't in the tab for some reason,
-            # we need to be careful about recreating it
-            if not tab_has_rec_text:
-                # Clear the recommendations tab completely
-                for widget in self.recommendations_tab.winfo_children():
-                    widget.destroy()
+            # Create a canvas with scrollbar for recommendations tab
+            canvas = tk.Canvas(self.recommendations_tab, width=1500, height=1000)
+            scrollbar = ttk.Scrollbar(self.recommendations_tab, orient="vertical")
 
-                # Check if our original recommendations_text widget still exists
-                try:
-                    if hasattr(self, 'recommendations_text') and self.recommendations_text.winfo_exists():
-                        # The widget exists but is not in the tab, so we'll recreate it properly
-                        self.recommendations_text.destroy()
-                except:
-                    pass  # The widget doesn't exist or can't be accessed
+            # Create a frame inside the canvas for the recommendations
+            plot_frame = ttk.Frame(canvas, width=1500)
 
-                # Create a fresh recommendations_text widget
-                self.recommendations_text = scrolledtext.ScrolledText(
-                    self.recommendations_tab,
-                    height=30,
-                    font=self.fonts['body'],
-                    background=self.colors['light_bg'],
-                    foreground=self.colors['text'],
-                    padx=10,
-                    pady=10,
-                    wrap=tk.WORD
-                )
-                self.recommendations_text.pack(fill=tk.BOTH, expand=True)
+            # Configure scrolling
+            canvas.configure(yscrollcommand=scrollbar.set)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-                # Configure the tags for styled text
-                self.recommendations_text.tag_configure('heading', font=self.fonts['heading'], foreground=self.colors['primary'])
-                self.recommendations_text.tag_configure('subheading', font=self.fonts['subheading'], foreground=self.colors['secondary'])
-                self.recommendations_text.tag_configure('normal', font=self.fonts['body'])
-                self.recommendations_text.tag_configure('success', foreground=self.colors['success'])
-                self.recommendations_text.tag_configure('warning', foreground=self.colors['warning'])
-                self.recommendations_text.tag_configure('error', foreground=self.colors['danger'])
-                self.recommendations_text.tag_configure('highlight', background=self.colors['highlight'])
-                self.recommendations_text.tag_configure('code', font=self.fonts['code'], background='#f0f0f0')
-                self.recommendations_text.tag_configure('light_text', foreground=self.colors['light_text'])
+            # Create window in canvas
+            canvas.create_window((0, 0), window=plot_frame, anchor="nw", width=canvas.winfo_width())
 
-            # Clear the content of the recommendations_text widget
-            self.recommendations_text.delete(1.0, tk.END)
+            # Configure the plot frame to expand to fill the canvas width
+            def configure_plot_frame(event):
+                canvas_width = event.width
+                canvas.itemconfig(canvas.find_withtag("all")[0], width=canvas_width)
 
-            # The rest of the method remains the same but uses self.recommendations_text
-            # instead of creating a new canvas and scrolled widget
+            canvas.bind("<Configure>", configure_plot_frame)
 
             # Get filtered data
             filtered_df = self.get_filtered_data()
             if filtered_df is None or filtered_df.empty:
-                self.recommendations_text.insert(tk.END, "No data available for recommendations.", 'heading')
+                label = ttk.Label(plot_frame, text="No data available for recommendations.")
+                label.pack(pady=20)
                 return
 
-            # Add header information
+            # Create a header with dataset information
+            header_frame = ttk.Frame(plot_frame)
+            header_frame.pack(fill=tk.X, padx=10, pady=10)
+
             if len(self.datasets) > 1:
                 header_text = f"Recommendations - Combined Data from {len(self.datasets)} Years ({', '.join(sorted(self.datasets.keys()))})"
             else:
                 year = next(iter(self.datasets.keys()))
                 header_text = f"Recommendations - Year {year}"
 
-            self.recommendations_text.insert(tk.END, header_text + "\n\n", 'heading')
+            header_label = ttk.Label(header_frame, text=header_text, font=("Arial", 14, "bold"))
+            header_label.pack(pady=5)
 
             # If multiple datasets are loaded, add a dropdown to select which year to view
             if len(self.datasets) > 1:
-                # Create a selector frame above the recommendations_text
-                year_frame = ttk.Frame(self.recommendations_tab)
+                year_frame = ttk.Frame(plot_frame)
                 year_frame.pack(fill=tk.X, padx=10, pady=5)
 
-                ttk.Label(year_frame, text="Select Year:", style='Subheading.TLabel').pack(side=tk.LEFT, padx=5)
+                ttk.Label(year_frame, text="Select Year:", font=("Arial", 12)).pack(side=tk.LEFT, padx=5)
 
                 year_var = tk.StringVar(value="Combined")
                 year_options = ["Combined"] + sorted(self.datasets.keys())
-                year_dropdown = ttk.Combobox(
-                    year_frame,
-                    textvariable=year_var,
-                    values=year_options,
-                    state="readonly",
-                    width=15,
-                    font=self.fonts['body']
-                )
+                year_dropdown = ttk.Combobox(year_frame, textvariable=year_var, values=year_options, state="readonly", width=15, font=("Arial", 12))
                 year_dropdown.pack(side=tk.LEFT, padx=5)
                 year_dropdown.set("Combined")  # Default to combined view
 
+                # Create a container frame for the recommendations content
+                content_frame = ttk.Frame(plot_frame)
+                content_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
                 def on_year_change(event=None):
-                    # Clear existing content except the header
-                    self.recommendations_text.delete(1.0, tk.END)
-                    self.recommendations_text.insert(tk.END, header_text + "\n\n", 'heading')
+                    # Clear existing content
+                    for widget in content_frame.winfo_children():
+                        widget.destroy()
 
                     # Get data for selected year
                     selected_year = year_var.get()
@@ -4489,11 +4100,8 @@ class AnalysisGUI:
                             df_to_analyze = df_to_analyze[df_to_analyze['department_name'] == self.current_department.get()]
                         year_title = f"Year {selected_year}"
 
-                    # Show which year we're looking at
-                    self.recommendations_text.insert(tk.END, f"Showing recommendations for {year_title}\n\n", 'subheading')
-
-                    # Generate and display recommendations directly in the text widget
-                    self.display_recommendations_in_text(df_to_analyze)
+                    # Create recommendations for the selected year
+                    self.create_recommendations_for_year(content_frame, df_to_analyze, year_title)
 
                 # Bind the dropdown callback
                 year_dropdown.bind('<<ComboboxSelected>>', on_year_change)
@@ -4502,104 +4110,135 @@ class AnalysisGUI:
                 on_year_change()
             else:
                 # If only one year, display recommendations directly
+                content_frame = ttk.Frame(plot_frame)
+                content_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
                 year = next(iter(self.datasets.keys()))
-                self.recommendations_text.insert(tk.END, f"Showing recommendations for Year {year}\n\n", 'subheading')
-                self.display_recommendations_in_text(filtered_df)
+                self.create_recommendations_for_year(content_frame, filtered_df, f"Year {year}")
+
+            # Configure scroll region when plot frame changes
+            def configure_scroll_region(event):
+                canvas.configure(scrollregion=canvas.bbox("all"))
+
+            plot_frame.bind('<Configure>', configure_scroll_region)
+
+            # Add mousewheel scrolling
+            def on_mousewheel(event):
+                canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+
+            canvas.bind_all("<MouseWheel>", on_mousewheel)
 
         except Exception as e:
             logging.error(f"Error in plot_recommendations: {str(e)}")
-            self.recommendations_text.insert(tk.END, f"Error generating recommendations: {str(e)}\n", 'error')
+            for widget in self.recommendations_tab.winfo_children():
+                widget.destroy()
+            label = ttk.Label(self.recommendations_tab, text=f"Error generating recommendations: {str(e)}")
+            label.pack(pady=20)
 
-    def display_recommendations_in_text(self, df):
-        """Display recommendations directly in the recommendations_text widget"""
+    def create_recommendations_for_year(self, parent_frame, df, title):
+        """Create recommendations for a specific year"""
         try:
-            # Check if we have data
-            if df is None or df.empty:
-                self.recommendations_text.insert(tk.END, "No data available for recommendations.\n", 'normal')
-                return
+            # Create a title for the recommendations
+            title_label = ttk.Label(parent_frame, text=f"Recommendations for {title}", font=("Arial", 12, "bold"))
+            title_label.pack(pady=5)
 
-            # Analyze ratings
-            avg_scores, needs_improvement, moderately_satisfactory, satisfactory, very_satisfactory = analyze_event_ratings(df)
+            # Create recommendations text widget
+            recommendations_text = scrolledtext.ScrolledText(parent_frame, wrap=tk.WORD, height=30, font=("Arial", 11))
+            recommendations_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-            # Get common issues dictionary for reference
+            # Calculate average scores for each feature
+            numeric_df = df.copy()
+            if 'department_name' in numeric_df.columns:
+                numeric_df = numeric_df.drop('department_name', axis=1)
+
+            # Convert all columns to numeric
+            for col in numeric_df.columns:
+                numeric_df[col] = pd.to_numeric(numeric_df[col], errors='coerce')
+
+            # Calculate average scores
+            avg_scores = numeric_df.mean()
+
+            # Identify low and high scoring features
+            needs_improvement = avg_scores[avg_scores < 1.5]  # Below 1.5 on 0-3 scale
+            very_satisfactory = avg_scores[avg_scores >= 2.25]  # Above 2.25 on 0-3 scale
+
+            # Get common issues dictionary
             common_issues = get_common_issues_dictionary()
 
             # Display common issues for low scores
-            self.recommendations_text.insert(tk.END, "COMMON ISSUES FOR LOW SCORES:\n\n", 'heading')
-
             if not needs_improvement.empty:
+                recommendations_text.insert(tk.END, "COMMON ISSUES FOR LOW SCORES:\n\n")
                 for feature in needs_improvement.index:
+                    feature_name = feature.replace('_', ' ').title()
                     if feature in common_issues:
-                        feature_name = feature.replace('_', ' ').title()
-                        self.recommendations_text.insert(tk.END, f"{feature_name}:\n", 'subheading')
-                        self.recommendations_text.insert(tk.END, f"{common_issues[feature]}\n\n", 'normal')
+                        recommendations_text.insert(tk.END, f"{feature_name}:\n")
+                        recommendations_text.insert(tk.END, f"{common_issues[feature]}\n\n")
+
+            # Generate standard recommendations based on low scores
+            standard_recommendations = generate_event_recommendations(needs_improvement)
+
+            # Generate maintenance recommendations for high scores
+            maintenance_recommendations = generate_event_maintenance_recommendations(very_satisfactory)
+
+            # Generate dynamic recommendations
+            dynamic_recommendations = self.generate_dynamic_recommendations(
+                numeric_df, needs_improvement, very_satisfactory
+            )
+
+            # Display recommendations
+            recommendations_text.insert(tk.END, "IMPROVEMENT RECOMMENDATIONS:\n\n")
+
+            if standard_recommendations:
+                for feature, recs in standard_recommendations.items():
+                    feature_name = feature.replace('_', ' ').title()
+                    recommendations_text.insert(tk.END, f"{feature_name}:\n")
+
+                    for rec in recs:
+                        recommendations_text.insert(tk.END, f"• {rec['text']}\n")
+                        recommendations_text.insert(tk.END, f"  Action: {rec['action']}\n\n")
             else:
-                self.recommendations_text.insert(tk.END, "No ratings in the 'Needs Improvement' category.\n\n", 'normal')
+                recommendations_text.insert(tk.END, "No improvement recommendations identified.\n\n")
 
-            # Generate and display improvement recommendations
-            if not needs_improvement.empty:
-                improvement_recs = generate_event_recommendations(needs_improvement)
+            # Add dynamic recommendations
+            recommendations_text.insert(tk.END, "\nDETAILED RECOMMENDATIONS:\n\n")
 
-                self.recommendations_text.insert(tk.END, "IMPROVEMENT RECOMMENDATIONS:\n\n", 'heading')
+            if dynamic_recommendations:
+                has_recommendations = False
+                for feature, recs in dynamic_recommendations.items():
+                    if recs:  # Only show features with recommendations
+                        has_recommendations = True
+                        feature_name = feature.replace('_', ' ').title()
+                        recommendations_text.insert(tk.END, f"{feature_name}:\n")
 
-                if improvement_recs:
-                    for feature, recs in improvement_recs.items():
-                        if recs:  # Only show if we have recommendations
-                            feature_name = feature.replace('_', ' ').title()
-                            self.recommendations_text.insert(tk.END, f"{feature_name}:\n", 'subheading')
+                        for rec in recs:
+                            recommendations_text.insert(tk.END, f"• {rec['text']} (Priority: {rec['priority']})\n")
+                            recommendations_text.insert(tk.END, f"  {rec['action']}\n\n")
 
-                            for rec in recs:
-                                self.recommendations_text.insert(tk.END, f"• ", 'normal')
-                                self.recommendations_text.insert(tk.END, f"{rec['text']}\n", 'normal')
-                                self.recommendations_text.insert(tk.END, f"  Action: ", 'light_text')
-                                self.recommendations_text.insert(tk.END, f"{rec['action']}\n\n", 'normal')
-                else:
-                    self.recommendations_text.insert(tk.END, "No improvement recommendations identified.\n\n", 'normal')
+                if not has_recommendations:
+                    recommendations_text.insert(tk.END, "No detailed recommendations identified.\n\n")
+            else:
+                recommendations_text.insert(tk.END, "No detailed recommendations identified.\n\n")
 
-                # Generate detailed recommendations
-                detailed_recs = generate_recommendations_from_rules(self.rules, df) if hasattr(self, 'rules') else {}
+            # Add maintenance recommendations
+            recommendations_text.insert(tk.END, "\nMAINTENANCE RECOMMENDATIONS:\n\n")
 
-                self.recommendations_text.insert(tk.END, "\nDETAILED RECOMMENDATIONS:\n\n", 'heading')
+            if maintenance_recommendations:
+                for feature, recs in maintenance_recommendations.items():
+                    feature_name = feature.replace('_', ' ').title()
+                    recommendations_text.insert(tk.END, f"{feature_name}:\n")
 
-                if detailed_recs:
-                    for feature, recs in detailed_recs.items():
-                        if recs:  # Only show if we have recommendations
-                            feature_name = feature.replace('_', ' ').title()
-                            self.recommendations_text.insert(tk.END, f"{feature_name}:\n", 'subheading')
+                    for rec in recs:
+                        recommendations_text.insert(tk.END, f"• {rec['text']}\n")
+                        recommendations_text.insert(tk.END, f"  Action: {rec['action']}\n\n")
+            else:
+                recommendations_text.insert(tk.END, "No maintenance recommendations identified.\n\n")
 
-                            for rec in recs:
-                                self.recommendations_text.insert(tk.END, f"• ", 'normal')
-                                self.recommendations_text.insert(tk.END, f"{rec['text']} ", 'normal')
-                                self.recommendations_text.insert(tk.END, f"(Priority: {rec['priority']})\n", 'light_text')
-                                self.recommendations_text.insert(tk.END, f"  {rec['action']}\n\n", 'normal')
-                elif not needs_improvement.empty:
-                    self.recommendations_text.insert(tk.END, "No detailed recommendations identified.\n\n", 'normal')
-                else:
-                    self.recommendations_text.insert(tk.END, "No detailed recommendations identified.\n\n", 'normal')
-
-            # Generate and display maintenance recommendations for high scores
-            if not very_satisfactory.empty:
-                maintenance_recs = generate_event_maintenance_recommendations(very_satisfactory)
-
-                self.recommendations_text.insert(tk.END, "\nMAINTENANCE RECOMMENDATIONS:\n\n", 'heading')
-
-                if maintenance_recs:
-                    for feature, recs in maintenance_recs.items():
-                        if recs:  # Only show if we have recommendations
-                            feature_name = feature.replace('_', ' ').title()
-                            self.recommendations_text.insert(tk.END, f"{feature_name}:\n", 'subheading')
-
-                            for rec in recs:
-                                self.recommendations_text.insert(tk.END, f"• ", 'normal')
-                                self.recommendations_text.insert(tk.END, f"{rec['text']}\n", 'normal')
-                                self.recommendations_text.insert(tk.END, f"  Action: ", 'light_text')
-                                self.recommendations_text.insert(tk.END, f"{rec['action']}\n\n", 'normal')
-                else:
-                    self.recommendations_text.insert(tk.END, "No maintenance recommendations identified.\n\n", 'normal')
+            # Make text read-only
+            recommendations_text.config(state='disabled')
 
         except Exception as e:
-            logging.error(f"Error displaying recommendations: {str(e)}")
-            self.recommendations_text.insert(tk.END, f"Error displaying recommendations: {str(e)}\n", 'error')
+            logging.error(f"Error creating recommendations for {title}: {str(e)}")
+            ttk.Label(parent_frame, text=f"Error creating recommendations for {title}: {str(e)}").pack(pady=20)
 
 def interpret_ratings(avg_scores):
     """
