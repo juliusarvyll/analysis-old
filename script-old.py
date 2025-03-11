@@ -16,6 +16,14 @@ import logging
 from sklearn.metrics import silhouette_score
 from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
 import time
+import io
+from reportlab.lib.pagesizes import letter, landscape
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from functools import lru_cache
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -783,6 +791,10 @@ class AnalysisGUI:
             self.departments = []  # Store available departments
             self.current_department = tk.StringVar(value="All Departments")  # Store current department selection
 
+            # Keep reference to the navigation frame and buttons
+            self.nav_frame = None
+            self.nav_buttons = {}
+
             # Add fixed rating scale constants
             self.RATING_SCALE = {
                 'min': 0.0,
@@ -870,7 +882,7 @@ class AnalysisGUI:
             # Create department filter frame
             self.create_department_filter()
 
-            # Create navigation bar
+            # Create navigation bar - store reference to it
             self.create_navigation()
 
             # Create notebook for tabs with improved styling
@@ -897,8 +909,7 @@ class AnalysisGUI:
             self.tab_control.add(self.baseline_tab, text='Baseline Comparisons')
             self.tab_control.add(self.cluster_trends_tab, text='Cluster Trends Per Year')
 
-            # Create styled text widgets for output and recommendations
-            # With better fonts and colors
+            # Create scrolled text widgets for output and recommendations
             self.output_text = scrolledtext.ScrolledText(
                 self.output_tab,
                 height=30,
@@ -910,16 +921,6 @@ class AnalysisGUI:
                 wrap=tk.WORD
             )
             self.output_text.pack(fill=tk.BOTH, expand=True)
-
-            # Configure tags for styled text
-            self.output_text.tag_configure('heading', font=self.fonts['heading'], foreground=self.colors['primary'])
-            self.output_text.tag_configure('subheading', font=self.fonts['subheading'], foreground=self.colors['secondary'])
-            self.output_text.tag_configure('normal', font=self.fonts['body'])
-            self.output_text.tag_configure('success', foreground=self.colors['success'])
-            self.output_text.tag_configure('warning', foreground=self.colors['warning'])
-            self.output_text.tag_configure('error', foreground=self.colors['danger'])
-            self.output_text.tag_configure('highlight', background=self.colors['highlight'])
-            self.output_text.tag_configure('code', font=self.fonts['code'], background='#f0f0f0')
 
             self.recommendations_text = scrolledtext.ScrolledText(
                 self.recommendations_tab,
@@ -933,7 +934,17 @@ class AnalysisGUI:
             )
             self.recommendations_text.pack(fill=tk.BOTH, expand=True)
 
-            # Configure the same tags for recommendations text
+            # Configure text tags for formatting
+            self.output_text.tag_configure('heading', font=self.fonts['heading'], foreground=self.colors['primary'])
+            self.output_text.tag_configure('subheading', font=self.fonts['subheading'], foreground=self.colors['secondary'])
+            self.output_text.tag_configure('normal', font=self.fonts['body'])
+            self.output_text.tag_configure('success', foreground=self.colors['success'])
+            self.output_text.tag_configure('warning', foreground=self.colors['warning'])
+            self.output_text.tag_configure('error', foreground=self.colors['danger'])
+            self.output_text.tag_configure('highlight', background=self.colors['highlight'])
+            self.output_text.tag_configure('code', font=self.fonts['code'], background='#f0f0f0')
+            self.output_text.tag_configure('light_text', foreground=self.colors['light_text'])
+
             self.recommendations_text.tag_configure('heading', font=self.fonts['heading'], foreground=self.colors['primary'])
             self.recommendations_text.tag_configure('subheading', font=self.fonts['subheading'], foreground=self.colors['secondary'])
             self.recommendations_text.tag_configure('normal', font=self.fonts['body'])
@@ -942,6 +953,7 @@ class AnalysisGUI:
             self.recommendations_text.tag_configure('error', foreground=self.colors['danger'])
             self.recommendations_text.tag_configure('highlight', background=self.colors['highlight'])
             self.recommendations_text.tag_configure('code', font=self.fonts['code'], background='#f0f0f0')
+            self.recommendations_text.tag_configure('light_text', foreground=self.colors['light_text'])
 
             print("AnalysisGUI initialized successfully.")
 
@@ -1576,81 +1588,114 @@ class AnalysisGUI:
             return filtered_df
 
     def create_navigation(self):
-        """Create a navigation bar at the top of the window"""
-        # Create a main navigation frame with a subtle background
-        nav_frame = ttk.Frame(self.main_frame, style='Nav.TFrame')
-        nav_frame.pack(fill=tk.X, pady=(0, 10))
+        """Create a navigation bar at the top of the window with permanent button references"""
+        # Check if navigation frame already exists and remove it if it does
+        if hasattr(self, 'nav_frame') and self.nav_frame is not None:
+            try:
+                self.nav_frame.destroy()
+            except:
+                pass
 
-        # Create a toolbar style for the navigation
-        self.style.configure('Nav.TFrame', background=self.colors['light_bg'])
-        self.style.configure('NavButton.TButton', font=self.fonts['body'], padding=(12, 6))
-        self.style.configure('ActionButton.TButton', font=self.fonts['body'], padding=(12, 6),
-                           background=self.colors['primary'], foreground='white')
+        # Create a new navigation frame with a unique name for easier identification
+        self.nav_frame = ttk.Frame(self.main_frame, name="navigation_frame")
+        self.nav_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # Add a subtle border at the bottom
-        border_frame = ttk.Frame(self.main_frame, height=1, style='Border.TFrame')
-        self.style.configure('Border.TFrame', background=self.colors['light_text'])
-        border_frame.pack(fill=tk.X, pady=(0, 10))
+        # Create left frame for main controls
+        left_frame = ttk.Frame(self.nav_frame)
+        left_frame.pack(side=tk.LEFT, fill=tk.X)
 
-        # Create left frame for main controls with better spacing
-        left_frame = ttk.Frame(nav_frame, style='Nav.TFrame')
-        left_frame.pack(side=tk.LEFT, fill=tk.X, padx=5, pady=5)
+        # Clear existing button references
+        self.nav_buttons = {}
 
-        # Create right frame for thresholds
-        right_frame = ttk.Frame(nav_frame, style='Nav.TFrame')
-        right_frame.pack(side=tk.RIGHT, fill=tk.X, padx=5, pady=5)
-
-        # Create button groups with visual separation
-        data_group = ttk.LabelFrame(left_frame, text="Data", padding=(5, 2, 5, 5))
-        data_group.pack(side=tk.LEFT, padx=(0, 10), fill=tk.Y)
-
-        analysis_group = ttk.LabelFrame(left_frame, text="Analysis", padding=(5, 2, 5, 5))
-        analysis_group.pack(side=tk.LEFT, padx=(0, 10), fill=tk.Y)
-
-        # Main control buttons with icons and better styling
-        # Data group buttons
-        load_btn = ttk.Button(
-            data_group,
-            text="📂 Load Data",
+        # Create and store references to buttons
+        self.nav_buttons['load'] = ttk.Button(
+            left_frame,
+            text="Load Data",
             command=self.load_data,
-            style='NavButton.TButton',
             width=15
         )
-        load_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        self.nav_buttons['load'].pack(side=tk.LEFT, padx=2)
 
-        clear_btn = ttk.Button(
-            data_group,
-            text="🗑️ Clear Data",
+        self.nav_buttons['clear'] = ttk.Button(
+            left_frame,
+            text="Clear Data",
             command=self.clear_datasets,
-            style='NavButton.TButton',
             width=15
         )
-        clear_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        self.nav_buttons['clear'].pack(side=tk.LEFT, padx=2)
 
-        # Analysis group buttons
-        select_features_btn = ttk.Button(
-            analysis_group,
-            text="✓ Select Features",
+        self.nav_buttons['features'] = ttk.Button(
+            left_frame,
+            text="Select Features",
             command=self.select_features_window,
-            style='NavButton.TButton',
             width=15
         )
-        select_features_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        self.nav_buttons['features'].pack(side=tk.LEFT, padx=2)
 
-        analyze_btn = ttk.Button(
-            analysis_group,
-            text="▶ Run Analysis",
+        self.nav_buttons['analyze'] = ttk.Button(
+            left_frame,
+            text="Run Analysis",
             command=self.run_analysis,
-            style='ActionButton.TButton',
             width=15
         )
-        analyze_btn.pack(side=tk.LEFT, padx=2, pady=2)
+        self.nav_buttons['analyze'].pack(side=tk.LEFT, padx=2)
 
-        # Add tooltips to buttons
-        self.create_tooltip(load_btn, "Load event data files")
-        self.create_tooltip(clear_btn, "Clear all loaded datasets")
-        self.create_tooltip(select_features_btn, "Select features for analysis")
-        self.create_tooltip(analyze_btn, "Run the complete analysis workflow")
+        self.nav_buttons['export'] = ttk.Button(
+            left_frame,
+            text="Export to PDF",
+            command=self.open_pdf_export_window,
+            width=15
+        )
+        self.nav_buttons['export'].pack(side=tk.LEFT, padx=2)
+
+        # Add separator below navigation
+        self.separator = ttk.Separator(self.main_frame, orient='horizontal')
+        self.separator.pack(fill=tk.X, padx=5, pady=5)
+
+        logging.debug("Navigation bar created with buttons: %s", list(self.nav_buttons.keys()))
+        return self.nav_frame
+
+    def ensure_navigation_buttons(self):
+        """Make sure all navigation buttons are present and visible"""
+        try:
+            # Check if our navigation frame exists and has children
+            needs_recreation = False
+
+            if not hasattr(self, 'nav_frame') or self.nav_frame is None:
+                logging.debug("Navigation frame doesn't exist, will recreate")
+                needs_recreation = True
+            else:
+                try:
+                    if not self.nav_frame.winfo_exists():
+                        logging.debug("Navigation frame no longer exists, will recreate")
+                        needs_recreation = True
+                    else:
+                        # Check if all buttons exist
+                        for btn_name, btn in self.nav_buttons.items():
+                            if not btn.winfo_exists():
+                                logging.debug(f"Button {btn_name} doesn't exist, will recreate navigation")
+                                needs_recreation = True
+                                break
+                except:
+                    needs_recreation = True
+
+            if needs_recreation:
+                logging.info("Recreating navigation bar")
+                self.create_navigation()
+                # Ensure proper layout - update the UI
+                self.root.update_idletasks()
+
+            return True
+        except Exception as e:
+            logging.error(f"Error ensuring navigation buttons: {e}")
+            print(f"Error ensuring navigation buttons: {e}")
+            # Try to recover by recreating the navigation bar
+            try:
+                self.create_navigation()
+                return True
+            except Exception as e2:
+                logging.error(f"Failed to recreate navigation bar: {e2}")
+                return False
 
     def create_tooltip(self, widget, text):
         """Create a tooltip for a widget"""
@@ -1689,6 +1734,9 @@ class AnalysisGUI:
 
     def ensure_widgets_exist(self):
         """Helper method to ensure critical widgets exist and are properly configured"""
+        # Check if the navigation buttons exist
+        self.ensure_navigation_buttons()
+
         # Check output_text widget
         try:
             if not hasattr(self, 'output_text') or not self.output_text.winfo_exists():
@@ -1752,6 +1800,19 @@ class AnalysisGUI:
                 self.recommendations_text.tag_configure('light_text', foreground=self.colors['light_text'])
         except Exception as e:
             logging.error(f"Error ensuring recommendations_text exists: {str(e)}")
+
+        # Check department dropdown
+        try:
+            if not hasattr(self, 'department_dropdown') or not self.department_dropdown.winfo_exists():
+                # Recreate department filter
+                self.create_department_filter()
+        except Exception as e:
+            logging.error(f"Error ensuring department_dropdown exists: {str(e)}")
+            try:
+                # Try to recreate it
+                self.create_department_filter()
+            except Exception as e:
+                logging.error(f"Failed to recreate department dropdown: {str(e)}")
 
     def clear_datasets(self):
         """Clear all loaded datasets and reset the GUI"""
@@ -1920,15 +1981,43 @@ class AnalysisGUI:
                 # Update department list in dropdown
                 self.update_department_list()
 
+                # CRITICAL: Make sure navigation buttons exist after data loading
+                self.root.after(100, self.ensure_widgets_exist)
+
                 # Automatically prompt feature selection if new datasets were loaded
                 if new_datasets_loaded:
-                    self.select_features_window()
+                    # Feature selection should happen AFTER ensuring widgets exist
+                    self.root.after(200, self.select_features_window)
 
                 print("Data loading process completed.")  # Debug print
 
         except Exception as e:
             print(f"Error in load_data: {str(e)}")  # Debug print
             messagebox.showerror("Error", f"Error loading data: {str(e)}")
+
+    def ensure_navigation_buttons(self):
+        """Make sure all navigation buttons are present and visible"""
+        try:
+            # Check if we need to recreate the navigation bar
+            nav_frame = None
+            for child in self.root.winfo_children():
+                if isinstance(child, ttk.Frame) and child.winfo_name() == "!frame":
+                    nav_frame = child
+                    break
+
+            # If navigation frame is not found or empty, recreate it
+            if nav_frame is None or len(nav_frame.winfo_children()) < 2:
+                print("Navigation buttons not found, recreating...")
+                # Clear existing navigation if any
+                for child in self.root.winfo_children():
+                    if isinstance(child, ttk.Frame) and child.winfo_name() == "!frame":
+                        child.destroy()
+
+                # Recreate navigation bar
+                self.create_navigation()
+        except Exception as e:
+            print(f"Error ensuring navigation buttons: {e}")
+            logging.error(f"Error ensuring navigation buttons: {e}")
 
     def prompt_for_year(self, file_path):
         """
@@ -1985,6 +2074,9 @@ class AnalysisGUI:
     def select_features_window(self):
         print("Starting select_features_window method")  # Debug print
         try:
+            # Ensure all widgets exist before showing the window
+            self.ensure_widgets_exist()
+
             feature_window = tk.Toplevel(self.root)
             feature_window.title("Select Features")
             feature_window.geometry("400x500")
@@ -4243,7 +4335,7 @@ class AnalysisGUI:
             trend_label.pack(pady=5)
 
             # Create figure for overall trends
-            fig_overall = plt.Figure(figsize=(12, 6))
+            fig_overall = plt.Figure(figsize=(12, 6), dpi=100)  # Lower DPI for faster rendering
             ax_overall = fig_overall.add_subplot(111)
 
             years = sorted(trend_data.keys())
@@ -4600,6 +4692,1017 @@ class AnalysisGUI:
         except Exception as e:
             logging.error(f"Error displaying recommendations: {str(e)}")
             self.recommendations_text.insert(tk.END, f"Error displaying recommendations: {str(e)}\n", 'error')
+
+    def open_pdf_export_window(self):
+        """Open a window to configure PDF export options"""
+        try:
+            # Check if data is loaded
+            if not hasattr(self, 'df') or self.df is None or self.df.empty:
+                messagebox.showerror("Error", "No data loaded. Please load data first.")
+                return
+
+            # Ensure all widgets exist before proceeding
+            self.ensure_widgets_exist()
+
+            # Create export window
+            export_window = tk.Toplevel(self.root)
+            export_window.title("Export to PDF")
+            export_window.geometry("600x680")  # Made taller for performance warning
+            export_window.transient(self.root)
+            export_window.grab_set()
+
+            # Add padding to the window
+            main_frame = ttk.Frame(export_window, padding=20)
+            main_frame.pack(fill=tk.BOTH, expand=True)
+
+            # Title
+            title_label = ttk.Label(
+                main_frame,
+                text="Export Analysis to PDF",
+                font=self.fonts['heading'],
+                foreground=self.colors['primary']
+            )
+            title_label.pack(pady=(0, 20))
+
+            # Performance info frame with warning
+            perf_frame = ttk.Frame(main_frame, padding=10)
+            perf_frame.pack(fill=tk.X, pady=5)
+
+            # Add a warning icon
+            warning_label = ttk.Label(
+                perf_frame,
+                text="⚠️",
+                font=("Segoe UI", 16),
+                foreground=self.colors['warning']
+            )
+            warning_label.pack(side=tk.LEFT, padx=(0, 10))
+
+            # Add performance warning text
+            perf_text = (
+                "Exporting large datasets or multiple years of data may take several minutes, especially "
+                "when including cluster trends analysis. You can cancel the export at any time."
+            )
+            perf_warning = ttk.Label(
+                perf_frame,
+                text=perf_text,
+                foreground=self.colors['warning'],
+                wraplength=480,
+                justify=tk.LEFT
+            )
+            perf_warning.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            # File path frame
+            file_frame = ttk.Frame(main_frame)
+            file_frame.pack(fill=tk.X, pady=10)
+
+            ttk.Label(file_frame, text="Save PDF to:").pack(side=tk.LEFT, padx=(0, 10))
+
+            file_path = tk.StringVar()
+            file_entry = ttk.Entry(file_frame, textvariable=file_path, width=40)
+            file_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+
+            def select_file_path():
+                filepath = filedialog.asksaveasfilename(
+                    defaultextension=".pdf",
+                    filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")]
+                )
+                if filepath:
+                    file_path.set(filepath)
+
+            browse_btn = ttk.Button(file_frame, text="Browse...", command=select_file_path)
+            browse_btn.pack(side=tk.RIGHT)
+
+            # Content selection frame
+            content_frame = ttk.LabelFrame(main_frame, text="Select Content to Export", padding=10)
+            content_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+
+            # Create variables to track selected items for export
+            export_selections = {
+                "analysis_results": tk.BooleanVar(value=False),  # Changed to False by default
+                "clustering": tk.BooleanVar(value=True),
+                "association_rules": tk.BooleanVar(value=True),
+                "descriptive_stats": tk.BooleanVar(value=True),
+                "histograms": tk.BooleanVar(value=True),
+                "recommendations": tk.BooleanVar(value=True),
+                "baseline_comparisons": tk.BooleanVar(value=True),
+                "cluster_trends": tk.BooleanVar(value=False)  # Changed to False by default since it's slow
+            }
+
+            # Create a frame for organizing selections into two columns
+            selections_frame = ttk.Frame(content_frame)
+            selections_frame.pack(fill=tk.BOTH, expand=True)
+
+            # Left column
+            left_col = ttk.Frame(selections_frame)
+            left_col.pack(side=tk.LEFT, fill=tk.Y, expand=True)
+
+            # Right column
+            right_col = ttk.Frame(selections_frame)
+            right_col.pack(side=tk.LEFT, fill=tk.Y, expand=True)
+
+            # Add checkboxes to columns for better layout
+            ttk.Checkbutton(left_col, text="Analysis Results", variable=export_selections["analysis_results"]).pack(anchor=tk.W, pady=5)
+            ttk.Checkbutton(left_col, text="Clustering", variable=export_selections["clustering"]).pack(anchor=tk.W, pady=5)
+            ttk.Checkbutton(left_col, text="Association Rules", variable=export_selections["association_rules"]).pack(anchor=tk.W, pady=5)
+            ttk.Checkbutton(left_col, text="Descriptive Statistics", variable=export_selections["descriptive_stats"]).pack(anchor=tk.W, pady=5)
+
+            ttk.Checkbutton(right_col, text="Histograms", variable=export_selections["histograms"]).pack(anchor=tk.W, pady=5)
+            ttk.Checkbutton(right_col, text="Recommendations", variable=export_selections["recommendations"]).pack(anchor=tk.W, pady=5)
+            ttk.Checkbutton(right_col, text="Baseline Comparisons", variable=export_selections["baseline_comparisons"]).pack(anchor=tk.W, pady=5)
+
+            # Add cluster trends with a warning (at the bottom)
+            cluster_trends_frame = ttk.Frame(content_frame)
+            cluster_trends_frame.pack(fill=tk.X, anchor=tk.W, pady=5)
+            ttk.Checkbutton(cluster_trends_frame, text="Cluster Trends", variable=export_selections["cluster_trends"]).pack(side=tk.LEFT)
+            ttk.Label(cluster_trends_frame, text="(may slow down export significantly)", foreground=self.colors['warning'], font=self.fonts['small']).pack(side=tk.LEFT, padx=5)
+
+            # Year selection frame
+            year_frame = ttk.LabelFrame(main_frame, text="Select Years", padding=10)
+            year_frame.pack(fill=tk.X, pady=10)
+
+            year_selection = {}
+            all_years_var = tk.BooleanVar(value=True)
+
+            def toggle_all_years():
+                """Toggle selection of all years"""
+                all_selected = all_years_var.get()
+                for year_var in year_selection.values():
+                    year_var.set(all_selected)
+
+            ttk.Checkbutton(year_frame, text="All Years", variable=all_years_var, command=toggle_all_years).pack(anchor=tk.W, pady=5)
+
+            # Add individual year checkboxes if multiple years are available
+            if self.datasets:
+                years_frame = ttk.Frame(year_frame)
+                years_frame.pack(fill=tk.X, padx=20)
+
+                col, row = 0, 0
+                for i, year in enumerate(sorted(self.datasets.keys())):
+                    year_selection[year] = tk.BooleanVar(value=True)
+                    ttk.Checkbutton(years_frame, text=str(year), variable=year_selection[year]).grid(row=row, column=col, sticky=tk.W, padx=5, pady=2)
+                    col += 1
+                    if col > 2:  # 3 items per row
+                        col = 0
+                        row += 1
+
+            # Department selection frame
+            dept_frame = ttk.LabelFrame(main_frame, text="Select Departments", padding=10)
+            dept_frame.pack(fill=tk.X, pady=10)
+
+            dept_selection = {}
+            all_depts_var = tk.BooleanVar(value=True)
+
+            def toggle_all_depts():
+                """Toggle selection of all departments"""
+                all_selected = all_depts_var.get()
+                for dept_var in dept_selection.values():
+                    dept_var.set(all_selected)
+
+            ttk.Checkbutton(dept_frame, text="All Departments", variable=all_depts_var, command=toggle_all_depts).pack(anchor=tk.W, pady=5)
+
+            # Add individual department checkboxes
+            if self.departments:
+                depts_frame = ttk.Frame(dept_frame)
+                depts_frame.pack(fill=tk.X, padx=20)
+
+                col, row = 0, 0
+                for i, dept in enumerate(sorted(self.departments)):
+                    dept_selection[dept] = tk.BooleanVar(value=True)
+                    ttk.Checkbutton(depts_frame, text=dept, variable=dept_selection[dept]).grid(row=row, column=col, sticky=tk.W, padx=5, pady=2)
+                    col += 1
+                    if col > 1:  # 2 items per row
+                        col = 0
+                        row += 1
+
+            # Buttons frame
+            buttons_frame = ttk.Frame(main_frame)
+            buttons_frame.pack(fill=tk.X, pady=(20, 0))
+
+            def export_pdf():
+                """Handle PDF export with selected options"""
+                # Check if file path is provided
+                if not file_path.get():
+                    messagebox.showerror("Error", "Please specify a file path for the PDF.")
+                    return
+
+                # Check if at least one item is selected
+                if not any(export_selections.values()):
+                    messagebox.showerror("Error", "Please select at least one content type to export.")
+                    return
+
+                # Collect selected years
+                if all_years_var.get():
+                    selected_years = list(self.datasets.keys())
+                else:
+                    selected_years = [year for year, selected in year_selection.items() if selected.get()]
+
+                # Confirm with warning if cluster trends is selected and many years
+                if export_selections["cluster_trends"].get() and len(selected_years) > 3:
+                    confirm = messagebox.askyesno(
+                        "Performance Warning",
+                        "You've selected to export cluster trends with multiple years, which may take several minutes. Continue?",
+                        icon='warning'
+                    )
+                    if not confirm:
+                        return
+
+                # Collect selected content
+                selected_content = {key: var.get() for key, var in export_selections.items()}
+
+                # Collect selected departments
+                if all_depts_var.get():
+                    selected_depts = ["All Departments"] + self.departments
+                else:
+                    selected_depts = ["All Departments"] if all_depts_var.get() else []
+                    selected_depts += [dept for dept, selected in dept_selection.items() if selected.get()]
+
+                # Start PDF generation
+                self.generate_pdf(file_path.get(), selected_content, selected_years, selected_depts)
+
+                # Close the window
+                export_window.destroy()
+
+            cancel_btn = ttk.Button(buttons_frame, text="Cancel", command=export_window.destroy)
+            cancel_btn.pack(side=tk.RIGHT, padx=5)
+
+            export_btn = ttk.Button(
+                buttons_frame,
+                text="Generate PDF",
+                command=export_pdf,
+                style="Success.TButton"
+            )
+            export_btn.pack(side=tk.RIGHT, padx=5)
+
+        except Exception as e:
+            logging.error(f"Error in open_pdf_export_window: {str(e)}")
+            messagebox.showerror("Error", f"Error creating PDF export window: {str(e)}")
+
+    def generate_pdf(self, file_path, selected_content, selected_years, selected_departments):
+        """Generate a PDF report with the selected content, years, and departments"""
+        try:
+            # Show progress dialog
+            progress_window = tk.Toplevel(self.root)
+            progress_window.title("Generating PDF")
+            progress_window.geometry("300x150")
+            progress_window.transient(self.root)
+            progress_window.grab_set()
+
+            progress_frame = ttk.Frame(progress_window, padding=20)
+            progress_frame.pack(fill=tk.BOTH, expand=True)
+
+            ttk.Label(progress_frame, text="Generating PDF report...", font=self.fonts['subheading']).pack(pady=(0, 10))
+
+            progress = ttk.Progressbar(progress_frame, orient=tk.HORIZONTAL, length=250, mode='indeterminate')
+            progress.pack(pady=10)
+            progress.start(10)
+
+            status_var = tk.StringVar(value="Initializing...")
+            status_label = ttk.Label(progress_frame, textvariable=status_var)
+            status_label.pack(pady=10)
+
+            # Update progress in a non-blocking way
+            def update_status(message):
+                status_var.set(message)
+                progress_window.update()
+
+            # Create the PDF document
+            update_status("Creating PDF document...")
+
+            # Use landscape orientation for more space for visualizations
+            doc = SimpleDocTemplate(
+                file_path,
+                pagesize=landscape(letter),
+                rightMargin=0.5*inch,
+                leftMargin=0.5*inch,
+                topMargin=0.5*inch,
+                bottomMargin=0.5*inch
+            )
+
+            # Get styles
+            styles = getSampleStyleSheet()
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Title'],
+                fontSize=18,
+                spaceAfter=12,
+                alignment=TA_CENTER
+            )
+            heading_style = ParagraphStyle(
+                'CustomHeading',
+                parent=styles['Heading1'],
+                fontSize=14,
+                spaceAfter=6
+            )
+            subheading_style = ParagraphStyle(
+                'CustomSubheading',
+                parent=styles['Heading2'],
+                fontSize=12,
+                spaceAfter=6
+            )
+            normal_style = styles['Normal']
+            interpretation_style = ParagraphStyle(
+                'Interpretation',
+                parent=styles['Normal'],
+                fontSize=10,
+                leftIndent=20,
+                spaceAfter=6
+            )
+
+            # Create bullet point style
+            bullet_style = ParagraphStyle(
+                'BulletPoint',
+                parent=styles['Normal'],
+                fontSize=10,
+                leftIndent=30,
+                bulletIndent=15,
+                spaceAfter=3
+            )
+
+            # Create the content list
+            content = []
+
+            # Add title and metadata
+            content.append(Paragraph("Event Analysis Report", title_style))
+            content.append(Spacer(1, 0.2*inch))
+
+            # Add report metadata
+            metadata = [
+                f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+                f"Years included: {', '.join(map(str, selected_years)) if selected_years else 'None'}",
+                f"Departments included: {', '.join(selected_departments) if selected_departments else 'All'}"
+            ]
+
+            for meta in metadata:
+                content.append(Paragraph(meta, normal_style))
+
+            content.append(Spacer(1, 0.3*inch))
+
+            # Process each section based on selection
+            if selected_content["analysis_results"]:
+                update_status("Adding analysis results...")
+
+                content.append(Paragraph("Analysis Results", heading_style))
+                content.append(Spacer(1, 0.1*inch))
+
+                # Get analysis results from the output text widget
+                analysis_text = self.output_text.get(1.0, tk.END)
+                for line in analysis_text.split('\n'):
+                    if line.strip():  # Skip empty lines
+                        content.append(Paragraph(line, normal_style))
+                        content.append(Spacer(1, 0.05*inch))
+
+                content.append(Spacer(1, 0.2*inch))
+
+            if selected_content["recommendations"]:
+                update_status("Adding recommendations...")
+
+                content.append(Paragraph("Recommendations", heading_style))
+                content.append(Spacer(1, 0.1*inch))
+
+                # Get recommendations from the recommendations text widget
+                recommendations_text = self.recommendations_text.get(1.0, tk.END)
+                for line in recommendations_text.split('\n'):
+                    if line.strip():  # Skip empty lines
+                        # Format bullet points if they exist
+                        if line.strip().startswith('•'):
+                            content.append(Paragraph(f"&#8226; {line.strip()[1:].strip()}", bullet_style))
+                        else:
+                            content.append(Paragraph(line, normal_style))
+
+                content.append(Spacer(1, 0.2*inch))
+
+            # Add cluster trends analysis if selected
+            if selected_content["cluster_trends"] and len(selected_years) > 1:
+                update_status("Adding cluster trends analysis...")
+
+                content.append(Paragraph("Cluster Trends Over Time", heading_style))
+                content.append(Spacer(1, 0.1*inch))
+
+                # Calculate cluster trends data
+                try:
+                    # Create a figure for cluster trends with optimized resolution
+                    trend_fig = plt.Figure(figsize=(10, 6), dpi=100)  # Lower DPI for faster rendering
+                    trend_ax = trend_fig.add_subplot(111)
+
+                    # Create a dictionary to store trend data
+                    trend_data = {}
+
+                    # Analyze each year
+                    total_years = len(selected_years)
+                    for i, year in enumerate(sorted(selected_years)):
+                        if not update_status(f"Processing cluster data for year {year} ({i+1}/{total_years})..."):
+                            progress_window.destroy()
+                            return
+
+                        if year in self.datasets:
+                            # Get filtered data for the year
+                            year_df = self.get_filtered_data(year)
+
+                            if year_df is not None and not year_df.empty and len(self.selected_features) > 0:
+                                # Create clusters for this year - with performance optimizations
+                                try:
+                                    # Check if dataset is large - if so, sample it
+                                    if len(year_df) > 1000:
+                                        # Use a sample of at most 1000 rows for faster clustering
+                                        sample_size = min(1000, len(year_df))
+                                        year_df_sample = year_df.sample(n=sample_size, random_state=42)
+                                        clustered_df, kmeans, cluster_sizes, labels = self.cluster_events(year_df_sample, self.selected_features, return_labels=True)
+                                    else:
+                                        clustered_df, kmeans, cluster_sizes, labels = self.cluster_events(year_df, self.selected_features, return_labels=True)
+
+                                    # Calculate cluster metrics
+                                    if kmeans is not None:
+                                        n_clusters = len(kmeans.cluster_centers_)
+                                        cluster_sizes = [np.sum(labels == i) for i in range(n_clusters)]
+                                        cluster_percentages = [size / len(labels) * 100 for size in cluster_sizes]
+
+                                        # Store data for this year
+                                        trend_data[year] = {
+                                            'n_clusters': n_clusters,
+                                            'cluster_sizes': cluster_sizes,
+                                            'cluster_percentages': cluster_percentages,
+                                            'labels': labels,
+                                            'centers': kmeans.cluster_centers_
+                                        }
+
+                                    # Calculate rating distribution for this year
+                                    # Simplify by only analyzing a subset of features for large datasets
+                                    features_to_analyze = self.selected_features
+                                    if len(self.selected_features) > 10:
+                                        features_to_analyze = self.selected_features[:10]  # Limit for performance
+
+                                    category_counts = {
+                                        'Needs Improvement': 0,
+                                        'Moderately Satisfactory': 0,
+                                        'Satisfactory': 0,
+                                        'Very Satisfactory': 0
+                                    }
+
+                                    # Count ratings by category for this year
+                                    for feature in features_to_analyze:
+                                        if feature != 'department_name' and feature in year_df.columns:
+                                            values = year_df[feature].dropna()
+
+                                            # Use vectorized operations instead of multiple comparisons
+                                            ni_mask = values <= 0.74
+                                            ms_mask = (values > 0.74) & (values <= 1.49)
+                                            s_mask = (values > 1.49) & (values <= 2.24)
+                                            vs_mask = values > 2.24
+
+                                            category_counts['Needs Improvement'] += ni_mask.sum()
+                                            category_counts['Moderately Satisfactory'] += ms_mask.sum()
+                                            category_counts['Satisfactory'] += s_mask.sum()
+                                            category_counts['Very Satisfactory'] += vs_mask.sum()
+
+                                    # Convert to percentages
+                                    total = sum(category_counts.values())
+                                    if total > 0:
+                                        for category in category_counts:
+                                            trend_data[year][category] = category_counts[category] / total * 100
+
+                                except Exception as e:
+                                    logging.error(f"Error calculating cluster trends for year {year}: {e}")
+
+                    # Plot trend data if we have enough years
+                    if len(trend_data) > 1:
+                        if not update_status("Creating trend visualizations..."):
+                            progress_window.destroy()
+                            return
+
+                        try:
+                            # Sort years
+                            years = sorted(trend_data.keys())
+
+                            # Plot satisfaction trends
+                            categories = ['Very Satisfactory', 'Satisfactory', 'Moderately Satisfactory', 'Needs Improvement']
+                            colors = ['#06D6A0', '#118AB2', '#FFD166', '#FF6B6B']
+
+                            # Create data for categories
+                            category_data = {}
+                            for category in categories:
+                                category_data[category] = []
+                                for year in years:
+                                    # Check if category exists in this year's data
+                                    if category in trend_data[year]:
+                                        category_data[category].append(trend_data[year][category])
+                                    else:
+                                        # Use a default value if missing
+                                        category_data[category].append(0)
+
+                            # Clear the figure and recreate it
+                            plt.close(trend_fig)
+                            trend_fig = plt.Figure(figsize=(10, 6), dpi=100)
+                            trend_ax = trend_fig.add_subplot(111)
+
+                            # Plot lines with improved visibility
+                            for i, category in enumerate(categories):
+                                if len(years) == len(category_data[category]) and len(years) > 0:
+                                    trend_ax.plot(years, category_data[category], marker='o', markersize=8,
+                                                linewidth=2, color=colors[i], label=category)
+
+                            trend_ax.set_title('Rating Distribution Trends Across Years', fontsize=14)
+                            trend_ax.set_xlabel('Year', fontsize=12)
+                            trend_ax.set_ylabel('Percentage of Ratings', fontsize=12)
+                            trend_ax.legend(loc='best', fontsize=10)
+                            trend_ax.grid(True, linestyle='--', alpha=0.7)
+
+                            # Ensure y-axis shows percentages properly
+                            trend_ax.set_ylim(0, 100)
+                            trend_ax.set_yticks(range(0, 101, 10))
+
+                            # Add the plot to the PDF with explicit image capturing
+                            content.append(Paragraph("Rating Distribution Trends", subheading_style))
+
+                            # Use a more reliable way to capture the figure
+                            img_data = io.BytesIO()
+                            trend_fig.tight_layout()  # Ensure everything fits
+                            trend_fig.savefig(img_data, format='png', dpi=150, bbox_inches='tight')
+                            img_data.seek(0)
+
+                            # Add the image to content with explicit width/height
+                            img = Image(img_data, width=8*inch, height=4.5*inch)
+                            content.append(img)
+                            content.append(Spacer(1, 0.2*inch))
+
+                            # Print success message to logs
+                            logging.info("Successfully added cluster trends visualization to PDF")
+
+                        except Exception as e:
+                            logging.error(f"Error creating cluster trends visualization: {str(e)}")
+                            # Add a message to the PDF indicating the error
+                            content.append(Paragraph(f"Error creating cluster trends visualization: {str(e)}", normal_style))
+
+                except Exception as e:
+                    logging.error(f"Error creating cluster trends for PDF: {str(e)}")
+                    content.append(Paragraph(f"Error generating cluster trends: {str(e)}", normal_style))
+
+                content.append(Spacer(1, 0.3*inch))
+
+            # Function to capture figure as an image
+            def capture_figure(fig):
+                img_data = io.BytesIO()
+                fig.savefig(img_data, format='png', dpi=100, bbox_inches='tight')  # Lower DPI for faster rendering
+                img_data.seek(0)
+                return Image(img_data, width=9*inch, height=5*inch)
+
+            # Process visualizations for each year and department
+            for year in selected_years:
+                update_status(f"Processing data for year {year}...")
+
+                content.append(Paragraph(f"Year: {year}", subheading_style))
+                content.append(Spacer(1, 0.1*inch))
+
+                # Filter data for the current year
+                year_df = self.get_filtered_data(year)
+
+                # We need to process each department separately since the GUI shows data by department
+                for dept in selected_departments:
+                    update_status(f"Processing data for department {dept} in year {year}...")
+
+                    # Set the current department
+                    previous_dept = self.current_department.get()
+                    self.current_department.set(dept)
+
+                    # Get filtered data for this department and year
+                    dept_df = self.get_filtered_data(year)
+
+                    if dept_df is None or dept_df.empty:
+                        continue
+
+                    content.append(Paragraph(f"Department: {dept}", subheading_style))
+                    content.append(Spacer(1, 0.1*inch))
+
+                    # Add descriptive stats for this department and year
+                    if selected_content["descriptive_stats"] and self.selected_features:
+                        update_status(f"Adding descriptive statistics for {dept} in {year}...")
+
+                        try:
+                            # Create descriptive stats for the PDF
+                            content.append(Paragraph(f"Descriptive Statistics", subheading_style))
+
+                            # Filter and analyze only numeric columns
+                            numeric_cols = [col for col in dept_df.columns if col != 'department_name']
+
+                            if numeric_cols:
+                                # Create a summary table
+                                desc_stats = dept_df[numeric_cols].describe().round(2)
+
+                                # Convert to a list of lists for Table
+                                data = [['Metric'] + [col.replace('_', ' ').title() for col in desc_stats.columns]]
+                                for idx, row in desc_stats.iterrows():
+                                    data.append([idx.capitalize()] + [f"{val:.2f}" for val in row])
+
+                                # Create the table
+                                table = Table(data, colWidths=[1.5*inch] + [1.2*inch] * len(desc_stats.columns))
+
+                                # Add table style
+                                table_style = TableStyle([
+                                    ('BACKGROUND', (0, 0), (-1, 0), '#add8e6'),  # lightblue
+                                    ('TEXTCOLOR', (0, 0), (-1, 0), '#000000'),   # black
+                                    ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                                    ('BACKGROUND', (0, 1), (-1, -1), '#ffffff'),  # white
+                                    ('GRID', (0, 0), (-1, -1), 1, '#000000'),     # black
+                                    ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+                                    ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
+                                    ('FONTSIZE', (0, 1), (-1, -1), 9),
+                                ])
+                                table.setStyle(table_style)
+
+                                content.append(table)
+                                content.append(Spacer(1, 0.1*inch))
+
+                                # Add interpretation of descriptive stats
+                                content.append(Paragraph("Interpretation:", normal_style))
+
+                                # Calculate averages and interpret
+                                avg_scores = dept_df[numeric_cols].mean()
+                                interpretation = interpret_ratings(avg_scores)
+
+                                # Format the interpretation text for the PDF
+                                for line in interpretation.split('\n'):
+                                    if line.strip():
+                                        if ":" in line and not line.startswith(' '):
+                                            # This is a feature heading
+                                            content.append(Paragraph(line, normal_style))
+                                        else:
+                                            # This is a detail line
+                                            content.append(Paragraph(line, interpretation_style))
+
+                                content.append(Spacer(1, 0.2*inch))
+                        except Exception as e:
+                            logging.error(f"Error creating descriptive stats for PDF: {str(e)}")
+
+                    # Process each selected visualization type
+                    if selected_content["clustering"] and self.selected_features:
+                        update_status(f"Adding clustering visualization for {dept} in {year}...")
+
+                        # Create clustering visualization
+                        try:
+                            # Get or create clustering
+                            clustered_df, kmeans, cluster_sizes, labels = self.cluster_events(dept_df, self.selected_features, return_labels=True)
+
+                            # Create a figure for this plot
+                            cluster_fig = plt.Figure(figsize=(10, 6), dpi=100)
+                            ax = cluster_fig.add_subplot(111)
+
+                            # Create the plot
+                            if kmeans is not None and len(set(labels)) > 1:  # Only if there are multiple clusters
+                                self.create_cluster_visualization(dept_df, kmeans, labels, ax)
+
+                                # Add the plot to the PDF
+                                content.append(Paragraph(f"Clustering Analysis", subheading_style))
+                                content.append(capture_figure(cluster_fig))
+
+                                # Add cluster interpretation
+                                content.append(Paragraph("Cluster Interpretation:", normal_style))
+
+                                # Get cluster centers to understand what each cluster represents
+                                centers = kmeans.cluster_centers_
+                                n_clusters = len(centers)
+
+                                # Calculate interpretation for each cluster
+                                for i in range(n_clusters):
+                                    cluster_center = centers[i]
+                                    cluster_size = np.sum(labels == i)
+                                    cluster_percent = (cluster_size / len(labels)) * 100
+
+                                    # Find top features (highest values) for this cluster
+                                    numeric_features = [f for f in self.selected_features if f != 'department_name']
+                                    top_features_idx = np.argsort(cluster_center)[-3:]  # Top 3 features
+                                    top_features = [numeric_features[idx] for idx in top_features_idx if idx < len(numeric_features)]
+                                    top_features_values = [cluster_center[idx] for idx in top_features_idx if idx < len(numeric_features)]
+
+                                    # Format cluster interpretation
+                                    cluster_text = f"Cluster {i+1} ({cluster_size} events, {cluster_percent:.1f}% of total):"
+                                    content.append(Paragraph(cluster_text, normal_style))
+
+                                    # Add top features information
+                                    if top_features:
+                                        content.append(Paragraph(f"Key characteristics:", interpretation_style))
+                                        for j, (feature, value) in enumerate(zip(top_features, top_features_values)):
+                                            feature_name = feature.replace('_', ' ').title()
+                                            feature_text = f"&#8226; {feature_name}: {value:.2f}"
+                                            content.append(Paragraph(feature_text, bullet_style))
+
+                                content.append(Spacer(1, 0.2*inch))
+                        except Exception as e:
+                            logging.error(f"Error creating clustering visualization for PDF: {str(e)}")
+
+                    # Reset to the previous department when done
+                    self.current_department.set(previous_dept)
+
+            # Add baseline comparison if selected
+            if selected_content["baseline_comparisons"] and len(selected_years) > 1:
+                update_status("Adding baseline comparison...")
+
+                try:
+                    # Create heading with visual emphasis
+                    content.append(Paragraph("Baseline Comparison Analysis", heading_style))
+                    content.append(Spacer(1, 0.1*inch))
+
+                    # Add explanatory text
+                    content.append(Paragraph("This analysis compares the earliest year (baseline) with the most recent year to identify significant changes in ratings.", normal_style))
+                    content.append(Spacer(1, 0.1*inch))
+
+                    # Get baseline metrics from the first year and current metrics from the latest year
+                    baseline_year = min(selected_years)
+                    current_year = max(selected_years)
+
+                    content.append(Paragraph(f"Baseline Year: {baseline_year} | Current Year: {current_year}", normal_style))
+                    content.append(Spacer(1, 0.1*inch))
+
+                    if baseline_year in self.datasets and current_year in self.datasets:
+                        # Get filtered data for baseline and current year
+                        baseline_df = self.get_filtered_data(baseline_year)
+                        current_df = self.get_filtered_data(current_year)
+
+                        if baseline_df is not None and not baseline_df.empty and current_df is not None and not current_df.empty:
+                            # Calculate baseline metrics
+                            numeric_cols = [col for col in baseline_df.columns if col != 'department_name']
+                            baseline_metrics = {}
+
+                            for col in numeric_cols:
+                                if col in baseline_df.columns:
+                                    baseline_metrics[col] = baseline_df[col].mean()
+
+                            # Calculate current metrics and comparison
+                            comparison_data = {}
+
+                            # Create a figure for visual comparison
+                            comp_fig = plt.Figure(figsize=(10, 6), dpi=100)
+                            comp_ax = comp_fig.add_subplot(111)
+
+                            # Data for the bar chart
+                            features = []
+                            baseline_values = []
+                            current_values = []
+
+                            for col in numeric_cols:
+                                if col in current_df.columns and col in baseline_metrics:
+                                    current_val = current_df[col].mean()
+                                    baseline_val = baseline_metrics[col]
+
+                                    # For visualization
+                                    features.append(col.replace('_', ' ').title())
+                                    baseline_values.append(baseline_val)
+                                    current_values.append(current_val)
+
+                                    # Calculate percent change
+                                    if baseline_val > 0:
+                                        percent_change = ((current_val - baseline_val) / baseline_val) * 100
+                                    else:
+                                        percent_change = 0
+
+                                    # Determine significance
+                                    significant = abs(percent_change) > 5  # More than 5% change
+
+                                    comparison_data[col] = {
+                                        'baseline': baseline_val,
+                                        'current': current_val,
+                                        'percent_change': percent_change,
+                                        'significant': significant
+                                    }
+
+                            # Create comparison visualization
+                            if features:
+                                # Set up bar positions
+                                x = np.arange(len(features))
+                                width = 0.35
+
+                                # Create bars
+                                comp_ax.bar(x - width/2, baseline_values, width, label=f'Baseline ({baseline_year})')
+                                comp_ax.bar(x + width/2, current_values, width, label=f'Current ({current_year})')
+
+                                # Add labels and styling
+                                comp_ax.set_ylabel('Rating Value', fontsize=12)
+                                comp_ax.set_title('Baseline vs. Current Comparison', fontsize=14)
+                                comp_ax.set_xticks(x)
+                                comp_ax.set_xticklabels(features, rotation=45, ha='right')
+                                comp_ax.legend()
+                                comp_ax.grid(axis='y', linestyle='--', alpha=0.7)
+
+                                # Set y-axis to standard rating scale
+                                comp_ax.set_ylim(0, 3)
+
+                                # Adjust layout
+                                comp_fig.tight_layout()
+
+                                # Add the visualization to the PDF
+                                img_data = io.BytesIO()
+                                comp_fig.savefig(img_data, format='png', dpi=150, bbox_inches='tight')
+                                img_data.seek(0)
+                                content.append(Image(img_data, width=8*inch, height=4.5*inch))
+                                content.append(Spacer(1, 0.2*inch))
+
+                            # Create a table for the comparison data
+                            data = [['Feature', 'Baseline', 'Current', 'Change (%)', 'Significant']]
+
+                            for feature, values in comparison_data.items():
+                                feature_name = feature.replace('_', ' ').title()
+                                sign = '+' if values['percent_change'] > 0 else ''
+                                data.append([
+                                    feature_name,
+                                    f"{values['baseline']:.2f}",
+                                    f"{values['current']:.2f}",
+                                    f"{sign}{values['percent_change']:.1f}%",
+                                    'Yes' if values['significant'] else 'No'
+                                ])
+
+                            # Create the table
+                            table = Table(data, colWidths=[2*inch, 1*inch, 1*inch, 1*inch, 1*inch])
+
+                            # Add table style with color coding for changes
+                            table_style = TableStyle([
+                                ('BACKGROUND', (0, 0), (-1, 0), '#add8e6'),  # lightblue header
+                                ('TEXTCOLOR', (0, 0), (-1, 0), '#000000'),   # black text in header
+                                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                                ('BACKGROUND', (0, 1), (-1, -1), '#ffffff'),  # white background for data
+                                ('GRID', (0, 0), (-1, -1), 1, '#000000'),     # black grid
+                                ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+                                ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
+                                ('FONTSIZE', (0, 1), (-1, -1), 9),
+                            ])
+
+                            # Apply table style
+                            table.setStyle(table_style)
+
+                            # Add color to positive and negative changes in the table
+                            for i, (feature, values) in enumerate(comparison_data.items(), 1):
+                                if values['significant']:
+                                    if values['percent_change'] > 0:
+                                        # Green for positive changes
+                                        table_style.add('BACKGROUND', (3, i), (3, i), '#c6ecc6')  # light green
+                                    else:
+                                        # Red for negative changes
+                                        table_style.add('BACKGROUND', (3, i), (3, i), '#ffcccc')  # light red
+
+                            # Apply the updated style
+                            table.setStyle(table_style)
+
+                            content.append(Paragraph("Detailed Comparison:", subheading_style))
+                            content.append(table)
+                            content.append(Spacer(1, 0.2*inch))
+
+                            # Add interpretation text
+                            content.append(Paragraph("Interpretation of Changes:", subheading_style))
+
+                            # Look for significant improvements and declines
+                            improvements = []
+                            declines = []
+
+                            for feature, values in comparison_data.items():
+                                if values['significant']:
+                                    feature_name = feature.replace('_', ' ').title()
+                                    if values['percent_change'] > 0:
+                                        improvements.append(f"{feature_name} (+{values['percent_change']:.1f}%)")
+                                    else:
+                                        declines.append(f"{feature_name} ({values['percent_change']:.1f}%)")
+
+                            if improvements:
+                                content.append(Paragraph("Significant Improvements:", interpretation_style))
+                                for item in improvements:
+                                    content.append(Paragraph(f"&#8226; {item}", bullet_style))
+                                content.append(Spacer(1, 0.1*inch))
+
+                            if declines:
+                                content.append(Paragraph("Areas Needing Attention:", interpretation_style))
+                                for item in declines:
+                                    content.append(Paragraph(f"&#8226; {item}", bullet_style))
+                                content.append(Spacer(1, 0.1*inch))
+
+                            if not improvements and not declines:
+                                content.append(Paragraph("No significant changes detected between baseline and current year.", interpretation_style))
+                            else:
+                                # Add overall assessment
+                                if len(improvements) > len(declines):
+                                    content.append(Paragraph("Overall Assessment: Positive trend with more improvements than areas of concern.", normal_style))
+                                elif len(improvements) < len(declines):
+                                    content.append(Paragraph("Overall Assessment: Concerning trend with more areas needing attention than improvements.", normal_style))
+                                else:
+                                    content.append(Paragraph("Overall Assessment: Mixed results with equal numbers of improvements and areas needing attention.", normal_style))
+
+                            content.append(Spacer(1, 0.3*inch))
+
+                            # Log success
+                            logging.info("Successfully added baseline comparison to PDF")
+                        else:
+                            content.append(Paragraph("Could not generate baseline comparison: insufficient data in baseline or current year.", normal_style))
+                    else:
+                        content.append(Paragraph(f"Could not generate baseline comparison: missing data for baseline year ({baseline_year}) or current year ({current_year}).", normal_style))
+
+                except Exception as e:
+                    logging.error(f"Error creating baseline comparison for PDF: {str(e)}")
+                    content.append(Paragraph(f"Error creating baseline comparison: {str(e)}", normal_style))
+
+            # Build the PDF
+            update_status("Building PDF document...")
+            doc.build(content)
+
+            # Close progress window
+            progress_window.destroy()
+
+            # Show success message
+            messagebox.showinfo("Export Successful", f"Report has been successfully exported to:\n{file_path}")
+
+        except Exception as e:
+            logging.error(f"Error in generate_pdf: {str(e)}")
+            messagebox.showerror("Error", f"Error generating PDF: {str(e)}")
+
+            # Close progress window if it exists
+            try:
+                progress_window.destroy()
+            except:
+                pass
+
+    def create_cluster_visualization(self, df, kmeans, labels, ax):
+        """Create a cluster visualization on the given axes for PDF export"""
+        try:
+            # Check if we have enough dimensions for clustering
+            if len(self.selected_features) < 2:
+                return
+
+            # Filter out non-numeric columns
+            numeric_features = [f for f in self.selected_features if f != 'department_name']
+
+            if len(numeric_features) < 2:
+                return
+
+            # Extract features for visualization
+            X = df[numeric_features].values
+
+            # Scale the data
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+
+            # Use PCA for visualization if we have more than 2 dimensions
+            if X_scaled.shape[1] > 2:
+                pca = PCA(n_components=2)
+                X_pca = pca.fit_transform(X_scaled)
+
+                # Create a plot
+                centers_pca = pca.transform(scaler.transform(kmeans.cluster_centers_))
+
+                # Plot each cluster with a different color
+                for i in range(len(np.unique(labels))):
+                    ax.scatter(
+                        X_pca[labels == i, 0],
+                        X_pca[labels == i, 1],
+                        s=50,
+                        label=f'Cluster {i+1}'
+                    )
+
+                # Plot cluster centers
+                ax.scatter(
+                    centers_pca[:, 0],
+                    centers_pca[:, 1],
+                    s=200,
+                    marker='X',
+                    c='red',
+                    label='Centroids'
+                )
+
+                # Add labels and title
+                ax.set_xlabel('Principal Component 1')
+                ax.set_ylabel('Principal Component 2')
+                ax.set_title('Event Clusters (PCA projection)')
+                ax.legend()
+
+            else:
+                # Use the first two features directly
+                # Plot each cluster with a different color
+                for i in range(len(np.unique(labels))):
+                    ax.scatter(
+                        X_scaled[labels == i, 0],
+                        X_scaled[labels == i, 1],
+                        s=50,
+                        label=f'Cluster {i+1}'
+                    )
+
+                # Plot cluster centers
+                centers_scaled = scaler.transform(kmeans.cluster_centers_)
+                ax.scatter(
+                    centers_scaled[:, 0],
+                    centers_scaled[:, 1],
+                    s=200,
+                    marker='X',
+                    c='red',
+                    label='Centroids'
+                )
+
+                # Add labels and title
+                ax.set_xlabel(numeric_features[0])
+                ax.set_ylabel(numeric_features[1])
+                ax.set_title('Event Clusters')
+                ax.legend()
+
+        except Exception as e:
+            logging.error(f"Error in create_cluster_visualization: {str(e)}")
 
 def interpret_ratings(avg_scores):
     """
