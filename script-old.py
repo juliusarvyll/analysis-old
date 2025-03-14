@@ -24,6 +24,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from functools import lru_cache
+import inspect
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -267,202 +268,91 @@ def _prepare_for_association_rules_chunked(df, selected_features, chunk_size=500
 def generate_association_rules(binary_df, min_support=0.05, min_confidence=0.5, min_lift=1.0,
                               max_len=3, use_parallel=True):
     """
-    Generate association rules from binary data with optimized parameters and validation.
-    Includes parallel processing support for large datasets.
+    Generate association rules from binary data using the Apriori algorithm.
 
-    Args:
-        binary_df: Binary DataFrame prepared for association rule mining
-        min_support: Minimum support threshold (adjusted automatically for large datasets)
-        min_confidence: Minimum confidence threshold
-        min_lift: Minimum lift threshold for filtering rules
-        max_len: Maximum length of itemsets
-        use_parallel: Whether to use parallel processing
+    Parameters:
+    - binary_df: DataFrame with binary encoded features
+    - min_support: Minimum support threshold
+    - min_confidence: Minimum confidence threshold
+    - min_lift: Minimum lift threshold
+    - max_len: Maximum length of itemsets
+    - use_parallel: Whether to use parallel processing
+
+    Returns:
+    - rules: DataFrame containing association rules
     """
     try:
-        logging.info("Starting association rules generation")
+        start_time = time.time()
 
-        if binary_df.empty:
-            logging.warning("Empty DataFrame provided for association rules")
-            return pd.DataFrame()
+        # Check if we're in PDF generation mode (for optimizations)
+        pdf_generation_mode = False
+        frame = inspect.currentframe()
+        while frame:
+            if '_generating_pdf' in frame.f_locals and frame.f_locals['_generating_pdf']:
+                pdf_generation_mode = True
+                break
+            frame = frame.f_back
 
-        # For very large datasets, adjust parameters automatically
-        row_count = len(binary_df)
-        col_count = len(binary_df.columns)
+        # If we're generating a PDF, use simpler parameters for speed
+        if pdf_generation_mode:
+            logging.info("Optimizing association rules for PDF generation")
+            min_support = max(0.1, min_support)  # Increase min_support for speed
+            max_len = min(3, max_len)  # Limit max_len for speed
+            use_parallel = False  # Disable parallel for stability in PDF generation
 
-        logging.info(f"Association rule mining on {row_count} rows and {col_count} columns")
+        logging.info(f"Generating association rules with min_support={min_support}, "
+                    f"min_confidence={min_confidence}, min_lift={min_lift}")
 
-        # Calculate data density (percentage of non-zero values)
-        density = binary_df.sum().sum() / (row_count * col_count) * 100
-        logging.info(f"Data density: {density:.2f}%")
+        # Get frequent itemsets
+        frequent_itemsets = apriori(binary_df,
+                                   min_support=min_support,
+                                   max_len=max_len,
+                                   use_colnames=True,
+                                   verbose=0,
+                                   low_memory=True)
 
-        # Adjust parameters based on data characteristics
-        if density < 5:
-            # For very sparse data, lower the support threshold
-            logging.info("Data is very sparse, lowering support threshold")
-            min_support = min(min_support, 0.02)
+        if frequent_itemsets is None or len(frequent_itemsets) == 0:
+            logging.warning("No frequent itemsets found. Trying with lower support threshold...")
+            # Try with lower support
+            new_min_support = min_support / 2 if min_support > 0.01 else 0.01
+            frequent_itemsets = apriori(binary_df,
+                                       min_support=new_min_support,
+                                       max_len=max_len,
+                                       use_colnames=True,
+                                       verbose=0,
+                                       low_memory=True)
 
-        if row_count > 100000:
-            logging.info(f"Large dataset detected ({row_count} rows). Adjusting parameters.")
-            # Increase min_support for very large datasets to reduce computation
-            min_support = max(min_support, 0.1)
-            max_len = min(max_len, 2)  # Reduce max_len for very large datasets
-        elif row_count > 50000:
-            min_support = max(min_support, 0.075)
-        elif row_count > 10000:
-            min_support = max(min_support, 0.05)
-        elif row_count < 1000:
-            # For small datasets, use a lower minimum support
-            min_support = min(min_support, 0.03)
+            if frequent_itemsets is None or len(frequent_itemsets) == 0:
+                logging.warning("Still no frequent itemsets found.")
+                return pd.DataFrame()  # Return empty DataFrame
 
-        # Ensure min_support is at least 2 transactions
-        adjusted_min_support = max(min_support, 2 / row_count)
-        logging.info(f"Using adjusted min_support: {adjusted_min_support}")
+        logging.info(f"Found {len(frequent_itemsets)} frequent itemsets")
 
-        # Generate frequent itemsets with optimized parameters
-        try:
-            # Set up progress tracking
-            start_time = time.time()
-            logging.info(f"Starting apriori algorithm with {row_count} rows and {col_count} columns")
+        # Generate rules
+        rules = association_rules(frequent_itemsets,
+                                 metric="confidence",
+                                 min_threshold=min_confidence)
 
-            # Configure parallel processing if enabled
-            if use_parallel and row_count > 5000:
-                logging.info("Using parallel processing")
-                frequent_itemsets = apriori(
-                    binary_df,
-                    min_support=adjusted_min_support,
-                    use_colnames=True,
-                    max_len=max_len,
-                    verbose=1,
-                    low_memory=True  # Use low memory mode for large datasets
-                    # n_jobs parameter removed as it's not supported
-                )
-            else:
-                frequent_itemsets = apriori(
-                    binary_df,
-                    min_support=adjusted_min_support,
-                    use_colnames=True,
-                    max_len=max_len,
-                    verbose=1,
-                    low_memory=True   # Use low memory mode for large datasets
-                )
+        # Filter rules by lift
+        rules = rules[rules['lift'] >= min_lift]
 
-            apriori_time = time.time() - start_time
-            logging.info(f"Apriori completed in {apriori_time:.2f} seconds")
+        # Sort rules by lift
+        rules = rules.sort_values('lift', ascending=False)
 
-            if frequent_itemsets is None or frequent_itemsets.empty:
-                logging.warning(f"No frequent itemsets found with min_support={adjusted_min_support}")
+        logging.info(f"Generated {len(rules)} rules with min_lift={min_lift}")
+        logging.info(f"Association rules generation took {time.time() - start_time:.2f} seconds")
 
-                # Try with a lower support threshold as a fallback
-                if adjusted_min_support > 0.01:
-                    fallback_support = max(0.01, adjusted_min_support / 2)
-                    logging.info(f"Retrying with lower support threshold: {fallback_support}")
-
-                    frequent_itemsets = apriori(
-                        binary_df,
-                        min_support=fallback_support,
-                        use_colnames=True,
-                        max_len=max_len,
-                        verbose=1,
-                        low_memory=True
-                    )
-
-                    if frequent_itemsets is None or frequent_itemsets.empty:
-                        logging.warning(f"Still no frequent itemsets found with min_support={fallback_support}")
-                        return pd.DataFrame()
-                else:
-                    return pd.DataFrame()
-
-            logging.info(f"Found {len(frequent_itemsets)} frequent itemsets")
-
-            # For very large results, sample the frequent itemsets to reduce memory usage
-            if len(frequent_itemsets) > 10000:
-                logging.info(f"Large number of frequent itemsets ({len(frequent_itemsets)}). Sampling top 10000 by support.")
-                frequent_itemsets = frequent_itemsets.sort_values('support', ascending=False).head(10000)
-
-            # Generate rules with optimized confidence threshold
-            rules_start_time = time.time()
-
-            # Try with progressively lower confidence thresholds if needed
-            confidence_thresholds = [min_confidence, 0.3, 0.2]
-            rules = pd.DataFrame()
-
-            for conf_threshold in confidence_thresholds:
-                logging.info(f"Trying with confidence threshold: {conf_threshold}")
-
-                rules = association_rules(
-                    frequent_itemsets,
-                    metric="confidence",
-                    min_threshold=conf_threshold,
-                    support_only=False
-                )
-
-                if not rules.empty:
-                    logging.info(f"Found {len(rules)} rules with confidence threshold {conf_threshold}")
-                    break
-                else:
-                    logging.warning(f"No rules found with confidence threshold {conf_threshold}")
-
-            rules_time = time.time() - rules_start_time
-            logging.info(f"Rules generation completed in {rules_time:.2f} seconds")
-
-            if rules.empty:
-                logging.warning("No rules generated with any confidence threshold")
-                return pd.DataFrame()
-
-            # Filter rules by lift for significance
-            min_lift_thresholds = [min_lift, 0.8, 0.5]
-            significant_rules = pd.DataFrame()
-
-            for lift_threshold in min_lift_thresholds:
-                significant_rules = rules[rules['lift'] > lift_threshold]
-
-                if not significant_rules.empty:
-                    logging.info(f"Found {len(significant_rules)} rules with lift threshold {lift_threshold}")
-                    break
-                else:
-                    logging.warning(f"No rules found with lift threshold {lift_threshold}")
-
-            if significant_rules.empty:
-                logging.warning("No significant rules found with any lift threshold")
-                return pd.DataFrame()
-
-            # For very large results, limit the number of rules
-            if len(significant_rules) > 5000:
-                logging.info(f"Large number of rules ({len(significant_rules)}). Limiting to top 5000 by lift.")
-                significant_rules = significant_rules.sort_values(
-                    ['lift', 'confidence'],
-                    ascending=[False, False]
-                ).head(5000)
-            else:
-                # Sort rules by lift and confidence
-                significant_rules = significant_rules.sort_values(
-                    ['lift', 'confidence'],
-                    ascending=[False, False]
-                )
-
-            # Add support percentage for better interpretation
-            significant_rules['support_pct'] = significant_rules['support'] * 100
-            significant_rules['confidence_pct'] = significant_rules['confidence'] * 100
-
-            total_time = time.time() - start_time
-            logging.info(f"Generated {len(significant_rules)} significant rules in {total_time:.2f} seconds")
-            return significant_rules
-
-        except MemoryError:
-            logging.error("Memory error during rule generation. Try reducing the dataset size or increasing min_support.")
-            return pd.DataFrame()
-        except Exception as e:
-            logging.error(f"Error in rule generation: {str(e)}", exc_info=True)
-            return pd.DataFrame()
+        return rules
 
     except Exception as e:
-        logging.error(f"Unexpected error in generate_association_rules: {str(e)}", exc_info=True)
+        logging.error(f"Error in generate_association_rules: {str(e)}")
+        # Return empty DataFrame
         return pd.DataFrame()
 
 def generate_recommendations_from_rules(self, rules, df, min_lift=1.5, max_recommendations=10):
     """
     Generate recommendations based on association rules analysis using fixed rating scale.
-    Only includes top recommendations based on lift and confidence for features with low ratings.
+    Includes recommendations for features with ratings below the maximum score.
     Excludes Overall_Rating from recommendations.
     """
     recommendations = {}
@@ -474,6 +364,7 @@ def generate_recommendations_from_rules(self, rules, df, min_lift=1.5, max_recom
     min_rating = self.RATING_SCALE['min']
     max_rating = self.RATING_SCALE['max']
     needs_improvement = self.RATING_SCALE['thresholds']['needs_improvement']
+    very_satisfactory = self.RATING_SCALE['thresholds']['very_satisfactory']
 
     # Calculate average ratings for each feature
     avg_ratings = df.mean()
@@ -503,8 +394,9 @@ def generate_recommendations_from_rules(self, rules, df, min_lift=1.5, max_recom
                 if feature == 'Overall_Rating':
                     continue
 
-                # Skip if feature's average rating is not low
-                if feature in avg_ratings and avg_ratings[feature] >= needs_improvement:
+                # Include features with ratings below the maximum (3.0)
+                # Skip only if rating is very satisfactory and at or near the maximum
+                if feature in avg_ratings and avg_ratings[feature] >= max_rating * 0.95:
                     continue
 
                 if feature not in recommendations:
@@ -526,7 +418,7 @@ def generate_recommendations_from_rules(self, rules, df, min_lift=1.5, max_recom
                     if cons_feature == 'Overall_Rating':
                         continue
 
-                    if rating in ['Needs_Improvement', 'Moderately_Satisfactory']:
+                    if rating in ['Needs_Improvement', 'Moderately_Satisfactory', 'Satisfactory']:
                         recommendation = {
                             'text': f"Improve {feature} (current avg: {avg_ratings[feature]:.2f}/{max_rating:.1f}) to enhance {cons_feature}",
                             'action': f"• Implement targeted improvements in {feature} to achieve {cons_rating} {cons_feature}",
@@ -543,6 +435,10 @@ def generate_recommendations_from_rules(self, rules, df, min_lift=1.5, max_recom
                             recommendation['action'] += f"\n• Develop enhancement plan for {feature}"
                             recommendation['action'] += f"\n• Implement monthly progress tracking"
                             recommendation['priority'] = 'Medium'
+                        elif rating == 'Satisfactory':
+                            recommendation['action'] += f"\n• Fine-tune {feature.replace('_', ' ').lower()} elements"
+                            recommendation['action'] += f"\n• Schedule quarterly improvement reviews"
+                            recommendation['priority'] = 'Low'
 
                         if recommendation not in recommendations[feature]:
                             recommendations[feature].append(recommendation)
@@ -692,6 +588,102 @@ def generate_event_maintenance_recommendations(high_scores):
         ]
     }
     return {k: maintenance_recommendations.get(k, []) for k in high_scores.index if k in maintenance_recommendations}
+
+def generate_event_improvement_recommendations(moderate_scores):
+    """Generate improvement recommendations for scores that are not at the highest level but not in needs improvement category."""
+    improvement_recommendations = {
+        'Overall_Rating': [
+            {
+                'text': "Identify specific areas for enhancement",
+                'action': "Conduct targeted surveys to identify improvement opportunities",
+                'support': 1.0,
+                'confidence': 1.0,
+                'lift': 1.0
+            }
+        ],
+        'Objectives_Met': [
+            {
+                'text': "Enhance objective clarity and achievement",
+                'action': "Review and refine objective-setting process",
+                'support': 1.0,
+                'confidence': 1.0,
+                'lift': 1.0
+            }
+        ],
+        'Venue_Rating': [
+            {
+                'text': "Optimize current venue setup",
+                'action': "Identify specific venue improvements for next event",
+                'support': 1.0,
+                'confidence': 1.0,
+                'lift': 1.0
+            }
+        ],
+        'Schedule_Rating': [
+            {
+                'text': "Fine-tune event scheduling",
+                'action': "Analyze session timing and make targeted adjustments",
+                'support': 1.0,
+                'confidence': 1.0,
+                'lift': 1.0
+            }
+        ],
+        'Speaker_Rating': [
+            {
+                'text': "Enhance speaker preparation and support",
+                'action': "Implement pre-event speaker coaching sessions",
+                'support': 1.0,
+                'confidence': 1.0,
+                'lift': 1.0
+            }
+        ],
+        'content_relevance': [
+            {
+                'text': "Enhance content relevance for target audience",
+                'action': "Conduct pre-event content surveys with participants",
+                'support': 1.0,
+                'confidence': 1.0,
+                'lift': 1.0
+            }
+        ],
+        'organization': [
+            {
+                'text': "Streamline event organization",
+                'action': "Review and optimize event logistics process",
+                'support': 1.0,
+                'confidence': 1.0,
+                'lift': 1.0
+            }
+        ],
+        'venue_quality': [
+            {
+                'text': "Enhance venue quality elements",
+                'action': "Identify specific venue enhancements",
+                'support': 1.0,
+                'confidence': 1.0,
+                'lift': 1.0
+            }
+        ],
+        'networking_opportunities': [
+            {
+                'text': "Enhance networking opportunities",
+                'action': "Add more structured networking activities",
+                'support': 1.0,
+                'confidence': 1.0,
+                'lift': 1.0
+            }
+        ],
+        'value_for_money': [
+            {
+                'text': "Increase perceived value",
+                'action': "Add additional value elements to event package",
+                'support': 1.0,
+                'confidence': 1.0,
+                'lift': 1.0
+            }
+        ]
+    }
+    return {k: improvement_recommendations.get(k, []) for k in moderate_scores.index if k in improvement_recommendations}
 
 def interpret_event_association_rules(rules):
     """Generate human-readable interpretations for the association rules with fixed rating scale"""
@@ -1483,9 +1475,13 @@ class AnalysisGUI:
                         comparison_data = self.compare_with_baseline(filtered_df, baseline_metrics)
                         if comparison_data and len(comparison_data) > 0:
                             self.output_text.insert(tk.END, f"Comparison data generated for {len(comparison_data)} features\n")
+                            # Store comparison data as an instance attribute for use in recommendations
+                            self.baseline_comparison = comparison_data
                             self.plot_baseline_comparison(comparison_data)
                         else:
                             self.output_text.insert(tk.END, "No valid comparison data generated\n")
+                            # Clear any previous baseline comparison data
+                            self.baseline_comparison = None
                             # Create a simple message in the baseline tab
                             for widget in self.baseline_tab.winfo_children():
                                 widget.destroy()
@@ -3958,11 +3954,38 @@ class AnalysisGUI:
                 label.pack(pady=20)
                 return
 
+            # Create a tab control for single year vs multi-year views
+            tab_control = ttk.Notebook(self.baseline_tab)
+            tab_control.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+            # Create tabs
+            single_year_tab = ttk.Frame(tab_control)
+            multi_year_tab = ttk.Frame(tab_control)
+
+            tab_control.add(single_year_tab, text="Current vs Baseline")
+            tab_control.add(multi_year_tab, text="All Years")
+
+            # Single year comparison (existing functionality)
+            self._plot_single_year_baseline(single_year_tab, comparison_data)
+
+            # Multi-year comparison (new functionality)
+            self._plot_multi_year_baseline(multi_year_tab)
+
+        except Exception as e:
+            logging.error(f"Error in plot_baseline_comparison: {str(e)}")
+            for widget in self.baseline_tab.winfo_children():
+                widget.destroy()
+            error_label = ttk.Label(self.baseline_tab, text=f"Error plotting baseline comparison: {str(e)}")
+            error_label.pack(pady=20)
+
+    def _plot_single_year_baseline(self, parent_frame, comparison_data):
+        """Plot single year vs baseline comparison (original functionality)"""
+        try:
             # Get features from comparison data
             features = list(comparison_data.keys())
 
             # Create a simple frame for the visualization
-            main_frame = ttk.Frame(self.baseline_tab)
+            main_frame = ttk.Frame(parent_frame)
             main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
             # Add a title
@@ -4006,7 +4029,7 @@ class AnalysisGUI:
                 sig_label = ttk.Label(table_frame, text=sig_text)
                 sig_label.grid(row=i+1, column=4, padx=5, pady=2)
 
-            # Try to create the chart visualization iinf we have matplotlib
+            # Try to create the chart visualization if we have matplotlib
             try:
                 # Create figure with subplots
                 fig = plt.Figure(figsize=(10, 8))
@@ -4047,42 +4070,307 @@ class AnalysisGUI:
                 canvas.draw()
                 canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-                # Remove toolbar code
                 # No toolbar for cleaner UI
-
             except Exception as e:
-                logging.error(f"Error creating baseline chart: {str(e)}")
-                error_label = ttk.Label(main_frame, text=f"Could not create chart visualization: {str(e)}")
-                error_label.pack(pady=10)
+                logging.error(f"Error creating visualization: {e}")
+                error_label = ttk.Label(main_frame, text=f"Error creating visualization: {str(e)}")
+                error_label.pack(pady=20)
+        except Exception as e:
+            logging.error(f"Error in _plot_single_year_baseline: {str(e)}")
+            error_label = ttk.Label(parent_frame, text=f"Error plotting comparison: {str(e)}")
+            error_label.pack(pady=20)
 
-            # Add summary text
-            summary_frame = ttk.LabelFrame(main_frame, text="Summary")
-            summary_frame.pack(fill=tk.X, pady=10)
+    def _plot_multi_year_baseline(self, parent_frame):
+        """Plot multi-year comparison with all years of data"""
+        try:
+            if not self.datasets or len(self.datasets) < 2:
+                label = ttk.Label(parent_frame, text="Multiple years of data are required for multi-year comparison.")
+                label.pack(pady=20)
+                return
 
-            summary_text = tk.Text(summary_frame, height=6, wrap=tk.WORD)
-            summary_text.pack(fill=tk.X, padx=5, pady=5)
+            # Create main container
+            main_frame = ttk.Frame(parent_frame)
+            main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-            # Add summary of findings
-            summary = "Baseline Comparison Summary:\n\n"
-            for feature in features:
-                data = comparison_data[feature]
-                change = data['pct_change']
-                significant = data['significant']
+            # Add title
+            title_label = ttk.Label(main_frame, text="Multi-Year Comparison Analysis", font=("Arial", 14, "bold"))
+            title_label.pack(pady=10)
 
-                summary += f"• {feature.replace('_', ' ').title()}: {change:+.1f}% change from baseline"
-                if significant:
-                    summary += " (Statistically Significant)\n"
-                else:
-                    summary += " (Not Statistically Significant)\n"
+            # Get years and features for comparison
+            years = sorted(self.datasets.keys())
+            baseline_year = min(years)
 
-            summary_text.insert(tk.END, summary)
-            summary_text.config(state='disabled')
+            # We'll use the same features as the selected features
+            features = [f for f in self.selected_features if f != 'department_name']
+
+            if not features:
+                label = ttk.Label(main_frame, text="No numeric features selected for analysis.")
+                label.pack(pady=20)
+                return
+
+            # Calculate means for each year and feature
+            yearly_means = {}
+            for year, df in self.datasets.items():
+                yearly_means[year] = {}
+                for feature in features:
+                    if feature in df.columns:
+                        # Convert to numeric and handle missing values
+                        feature_data = pd.to_numeric(df[feature], errors='coerce')
+                        if not feature_data.isna().all():
+                            yearly_means[year][feature] = feature_data.mean()
+
+            # Create table for year-by-year data
+            table_frame = ttk.Frame(main_frame)
+            table_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+
+            # Add headers (Feature, Year1, Year2, etc.)
+            headers = ["Feature"] + years
+            for i, header in enumerate(headers):
+                label = ttk.Label(table_frame, text=header, font=("Arial", 10, "bold"))
+                label.grid(row=0, column=i, padx=5, pady=5, sticky="w")
+
+            # Add data rows with color coding for trends
+            for i, feature in enumerate(features):
+                # Feature name
+                feature_label = ttk.Label(table_frame, text=feature.replace('_', ' ').title())
+                feature_label.grid(row=i+1, column=0, padx=5, pady=2, sticky="w")
+
+                # Values for each year
+                baseline_value = None
+                if baseline_year in yearly_means and feature in yearly_means[baseline_year]:
+                    baseline_value = yearly_means[baseline_year][feature]
+
+                for j, year in enumerate(years):
+                    if year in yearly_means and feature in yearly_means[year]:
+                        value = yearly_means[year][feature]
+                        value_text = f"{value:.2f}"
+
+                        # Color code based on trend compared to baseline
+                        if baseline_value is not None and year != baseline_year:
+                            pct_change = ((value - baseline_value) / baseline_value) * 100 if baseline_value != 0 else 0
+                            value_text = f"{value:.2f} ({pct_change:+.1f}%)"
+                            color = "green" if pct_change > 0 else ("red" if pct_change < 0 else "black")
+                        else:
+                            color = "black"
+
+                        # Display value
+                        value_label = ttk.Label(table_frame, text=value_text, foreground=color)
+                        value_label.grid(row=i+1, column=j+1, padx=5, pady=2)
+                    else:
+                        # Show N/A if data not available
+                        value_label = ttk.Label(table_frame, text="N/A", foreground="gray")
+                        value_label.grid(row=i+1, column=j+1, padx=5, pady=2)
+
+            # Try to create visualization if we have matplotlib
+            try:
+                # Create figure for the trend lines
+                fig = plt.Figure(figsize=(10, 8))
+                ax = fig.add_subplot(111)
+
+                # Plot trend lines for each feature
+                for feature in features:
+                    feature_values = []
+                    for year in years:
+                        if year in yearly_means and feature in yearly_means[year]:
+                            feature_values.append(yearly_means[year][feature])
+                        else:
+                            # Use NaN for missing values
+                            feature_values.append(float('nan'))
+
+                    # Plot the line if we have enough data points
+                    if any(not np.isnan(v) for v in feature_values):
+                        ax.plot(years, feature_values, marker='o', label=feature.replace('_', ' ').title())
+
+                # Set labels and title
+                ax.set_xlabel('Year')
+                ax.set_ylabel('Rating Value')
+                ax.set_title('Feature Ratings Across Years')
+                ax.legend(loc='best')
+                ax.grid(True, linestyle='--', alpha=0.7)
+
+                # Adjust layout
+                fig.tight_layout()
+
+                # Create canvas for the plot
+                canvas_frame = ttk.Frame(main_frame)
+                canvas_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+
+                canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
+                canvas.draw()
+                canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            except Exception as e:
+                logging.error(f"Error creating trend visualization: {e}")
+                error_label = ttk.Label(main_frame, text=f"Error creating trend visualization: {str(e)}")
+                error_label.pack(pady=20)
+
+            # Add interpretation text
+            self._add_multi_year_interpretation(main_frame, yearly_means, features, years)
 
         except Exception as e:
-            logging.error(f"Error plotting baseline comparison: {str(e)}")
-            for widget in self.baseline_tab.winfo_children():
-                widget.destroy()
-            error_label = ttk.Label(self.baseline_tab, text=f"Error creating baseline comparison:\n{str(e)}")
+            logging.error(f"Error in _plot_multi_year_baseline: {str(e)}")
+            error_label = ttk.Label(parent_frame, text=f"Error plotting multi-year comparison: {str(e)}")
+            error_label.pack(pady=20)
+
+    def _add_multi_year_interpretation(self, parent_frame, yearly_means, features, years):
+        """Add descriptive interpretation of multi-year comparison"""
+        try:
+            # Create a frame for the interpretation
+            interp_frame = ttk.Frame(parent_frame)
+            interp_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+            # Add title
+            title_label = ttk.Label(interp_frame, text="Interpretation of Multi-Year Trends", font=("Arial", 12, "bold"))
+            title_label.pack(pady=10, anchor='w')
+
+            # Create text widget for interpretations
+            text_widget = ScrolledText(interp_frame, wrap=tk.WORD, height=10)
+            text_widget.pack(fill=tk.BOTH, expand=True, pady=5)
+
+            # Configure tags for formatting
+            text_widget.tag_configure('heading', font=("Arial", 11, "bold"))
+            text_widget.tag_configure('positive', foreground='green')
+            text_widget.tag_configure('negative', foreground='red')
+            text_widget.tag_configure('neutral', foreground='blue')
+            text_widget.tag_configure('normal', font=("Arial", 10))
+
+            # Generate interpretations
+            interpretations = ["# Multi-Year Comparison Analysis\n\n"]
+
+            # Get baseline year and latest year
+            baseline_year = min(years)
+            latest_year = max(years)
+
+            # Add overview
+            interpretations.append(f"## Overview\n")
+            interpretations.append(f"This analysis compares data across {len(years)} years ")
+            interpretations.append(f"from {baseline_year} to {latest_year}.\n\n")
+
+            # Calculate overall trends
+            improved_features = []
+            declined_features = []
+            stable_features = []
+
+            # Analyze each feature's trend
+            for feature in features:
+                first_value = None
+                last_value = None
+
+                if baseline_year in yearly_means and feature in yearly_means[baseline_year]:
+                    first_value = yearly_means[baseline_year][feature]
+
+                if latest_year in yearly_means and feature in yearly_means[latest_year]:
+                    last_value = yearly_means[latest_year][feature]
+
+                if first_value is not None and last_value is not None:
+                    pct_change = ((last_value - first_value) / first_value) * 100 if first_value != 0 else 0
+
+                    # Categorize based on change
+                    if pct_change > 5:
+                        improved_features.append((feature, pct_change))
+                    elif pct_change < -5:
+                        declined_features.append((feature, pct_change))
+                    else:
+                        stable_features.append((feature, pct_change))
+
+            # Add trend summaries
+            interpretations.append(f"## Key Findings\n\n")
+
+            # Improved features
+            if improved_features:
+                interpretations.append("### Improving Features\n")
+                improved_features.sort(key=lambda x: x[1], reverse=True)
+                for feature, change in improved_features:
+                    interpretations.append(f"* {feature.replace('_', ' ').title()}: {change:+.1f}% improvement from {baseline_year} to {latest_year}\n")
+                interpretations.append("\n")
+
+            # Declined features
+            if declined_features:
+                interpretations.append("### Declining Features\n")
+                declined_features.sort(key=lambda x: x[1])
+                for feature, change in declined_features:
+                    interpretations.append(f"* {feature.replace('_', ' ').title()}: {change:.1f}% decline from {baseline_year} to {latest_year}\n")
+                interpretations.append("\n")
+
+            # Stable features
+            if stable_features:
+                interpretations.append("### Stable Features\n")
+                for feature, change in stable_features:
+                    interpretations.append(f"* {feature.replace('_', ' ').title()}: Relatively stable ({change:+.1f}%)\n")
+                interpretations.append("\n")
+
+            # Analyze year-over-year changes
+            interpretations.append("## Year-Over-Year Analysis\n\n")
+
+            # For each consecutive pair of years
+            for i in range(len(years) - 1):
+                year1 = years[i]
+                year2 = years[i + 1]
+
+                interpretations.append(f"### {year1} to {year2} Change\n")
+
+                year_changes = []
+                for feature in features:
+                    if (year1 in yearly_means and feature in yearly_means[year1] and
+                        year2 in yearly_means and feature in yearly_means[year2]):
+                        value1 = yearly_means[year1][feature]
+                        value2 = yearly_means[year2][feature]
+
+                        pct_change = ((value2 - value1) / value1) * 100 if value1 != 0 else 0
+                        year_changes.append((feature, pct_change))
+
+                # Sort changes by magnitude
+                year_changes.sort(key=lambda x: abs(x[1]), reverse=True)
+
+                # Show top changes
+                if year_changes:
+                    for feature, change in year_changes[:5]:  # Show top 5 changes
+                        if change > 0:
+                            interpretations.append(f"* {feature.replace('_', ' ').title()}: {change:+.1f}% improvement\n")
+                        else:
+                            interpretations.append(f"* {feature.replace('_', ' ').title()}: {change:.1f}% decline\n")
+                else:
+                    interpretations.append("* No comparable data available\n")
+
+                interpretations.append("\n")
+
+            # Add recommendations
+            interpretations.append("## Recommendations Based on Trends\n\n")
+
+            if declined_features:
+                interpretations.append("### Areas Needing Attention\n")
+                for feature, change in declined_features[:3]:  # Focus on top 3 declining areas
+                    interpretations.append(f"* Focus on improving {feature.replace('_', ' ').title()} which has declined by {abs(change):.1f}%\n")
+                interpretations.append("\n")
+
+            if improved_features:
+                interpretations.append("### Continue Successful Practices\n")
+                for feature, change in improved_features[:3]:  # Highlight top 3 improvements
+                    interpretations.append(f"* Maintain successful practices for {feature.replace('_', ' ').title()} which has improved by {change:.1f}%\n")
+                interpretations.append("\n")
+
+            # Insert the interpretation text
+            interpretation_text = "".join(interpretations)
+            text_widget.insert(tk.END, interpretation_text)
+
+            # Apply formatting - this is simplified as tkinter doesn't support markdown
+            # Future enhancement could parse the markdown and apply appropriate tags
+            current_pos = '1.0'
+            while True:
+                heading_pos = text_widget.search('##', current_pos, tk.END)
+                if not heading_pos:
+                    break
+                line_end = text_widget.search('\n', heading_pos, tk.END)
+                if not line_end:
+                    break
+                text_widget.tag_add('heading', heading_pos, line_end)
+                current_pos = line_end
+
+            # Make text read-only
+            text_widget.configure(state='disabled')
+
+        except Exception as e:
+            logging.error(f"Error creating interpretation: {e}")
+            error_label = ttk.Label(parent_frame, text=f"Error creating interpretation: {str(e)}")
             error_label.pack(pady=20)
 
     def plot_histograms(self):
@@ -4628,7 +4916,7 @@ class AnalysisGUI:
             else:
                 self.recommendations_text.insert(tk.END, "No ratings in the 'Needs Improvement' category.\n\n", 'normal')
 
-            # Generate and display improvement recommendations
+            # Generate and display improvement recommendations for low scores
             if not needs_improvement.empty:
                 improvement_recs = generate_event_recommendations(needs_improvement)
 
@@ -4648,26 +4936,48 @@ class AnalysisGUI:
                 else:
                     self.recommendations_text.insert(tk.END, "No improvement recommendations identified.\n\n", 'normal')
 
-                # Generate detailed recommendations
-                detailed_recs = generate_recommendations_from_rules(self.rules, df) if hasattr(self, 'rules') else {}
+            # Generate and display enhancement recommendations for moderate/satisfactory scores
+            combined_moderate_scores = pd.concat([moderately_satisfactory, satisfactory])
+            if not combined_moderate_scores.empty:
+                enhancement_recs = generate_event_improvement_recommendations(combined_moderate_scores)
 
-                self.recommendations_text.insert(tk.END, "\nDETAILED RECOMMENDATIONS:\n\n", 'heading')
+                self.recommendations_text.insert(tk.END, "ENHANCEMENT RECOMMENDATIONS:\n\n", 'heading')
 
-                if detailed_recs:
-                    for feature, recs in detailed_recs.items():
+                if enhancement_recs:
+                    for feature, recs in enhancement_recs.items():
                         if recs:  # Only show if we have recommendations
                             feature_name = feature.replace('_', ' ').title()
-                            self.recommendations_text.insert(tk.END, f"{feature_name}:\n", 'subheading')
+                            score_value = avg_scores[feature]
+                            self.recommendations_text.insert(tk.END, f"{feature_name} (Current Score: {score_value:.2f}/3.00):\n", 'subheading')
 
                             for rec in recs:
                                 self.recommendations_text.insert(tk.END, f"• ", 'normal')
-                                self.recommendations_text.insert(tk.END, f"{rec['text']} ", 'normal')
-                                self.recommendations_text.insert(tk.END, f"(Priority: {rec['priority']})\n", 'light_text')
-                                self.recommendations_text.insert(tk.END, f"  {rec['action']}\n\n", 'normal')
-                elif not needs_improvement.empty:
-                    self.recommendations_text.insert(tk.END, "No detailed recommendations identified.\n\n", 'normal')
+                                self.recommendations_text.insert(tk.END, f"{rec['text']}\n", 'normal')
+                                self.recommendations_text.insert(tk.END, f"  Action: ", 'light_text')
+                                self.recommendations_text.insert(tk.END, f"{rec['action']}\n\n", 'normal')
                 else:
-                    self.recommendations_text.insert(tk.END, "No detailed recommendations identified.\n\n", 'normal')
+                    self.recommendations_text.insert(tk.END, "No enhancement recommendations identified.\n\n", 'normal')
+
+            # Generate detailed recommendations
+            detailed_recs = generate_recommendations_from_rules(self.rules, df) if hasattr(self, 'rules') else {}
+
+            self.recommendations_text.insert(tk.END, "\nDETAILED RECOMMENDATIONS:\n\n", 'heading')
+
+            if detailed_recs:
+                for feature, recs in detailed_recs.items():
+                    if recs:  # Only show if we have recommendations
+                        feature_name = feature.replace('_', ' ').title()
+                        self.recommendations_text.insert(tk.END, f"{feature_name}:\n", 'subheading')
+
+                        for rec in recs:
+                            self.recommendations_text.insert(tk.END, f"• ", 'normal')
+                            self.recommendations_text.insert(tk.END, f"{rec['text']} ", 'normal')
+                            self.recommendations_text.insert(tk.END, f"(Priority: {rec['priority']})\n", 'light_text')
+                            self.recommendations_text.insert(tk.END, f"  {rec['action']}\n\n", 'normal')
+            elif not needs_improvement.empty:
+                self.recommendations_text.insert(tk.END, "No detailed recommendations identified.\n\n", 'normal')
+            else:
+                self.recommendations_text.insert(tk.END, "No detailed recommendations identified.\n\n", 'normal')
 
             # Generate and display maintenance recommendations for high scores
             if not very_satisfactory.empty:
@@ -4688,6 +4998,51 @@ class AnalysisGUI:
                                 self.recommendations_text.insert(tk.END, f"{rec['action']}\n\n", 'normal')
                 else:
                     self.recommendations_text.insert(tk.END, "No maintenance recommendations identified.\n\n", 'normal')
+
+            # Check if we have year-over-year data to analyze
+            if hasattr(self, 'baseline_comparison') and self.baseline_comparison:
+                # Generate yearly change recommendations
+                change_recs = generate_yearly_change_recommendations(self.baseline_comparison)
+
+                if change_recs:
+                    self.recommendations_text.insert(tk.END, "\nYEARLY CHANGE ANALYSIS:\n\n", 'heading')
+
+                    # Areas that need attention based on negative trends
+                    self.recommendations_text.insert(tk.END, "Areas Needing Attention:\n", 'subheading')
+                    for feature, recs in change_recs.items():
+                        feature_name = feature.replace('_', ' ').title()
+                        # Show feature name with change percentage
+                        if recs and 'change' in recs[0]:
+                            self.recommendations_text.insert(tk.END, f"• {feature_name} ({recs[0]['change']})\n", 'normal')
+
+                    self.recommendations_text.insert(tk.END, "\n", 'normal')
+
+                    # Overall assessment of trends
+                    if len(change_recs) > 0:
+                        if len(change_recs) > 2:
+                            assessment = "Concerning trend with multiple areas needing attention."
+                        else:
+                            assessment = "Some areas show concerning trends that require attention."
+                    else:
+                        assessment = "No significant negative trends identified."
+
+                    self.recommendations_text.insert(tk.END, f"Overall Assessment: {assessment}\n\n", 'normal')
+
+                    # Detailed recommendations for areas with negative trends
+                    self.recommendations_text.insert(tk.END, "RECOMMENDATIONS FOR DECLINING AREAS:\n\n", 'heading')
+
+                    for feature, recs in change_recs.items():
+                        if recs:  # Only show if we have recommendations
+                            feature_name = feature.replace('_', ' ').title()
+                            self.recommendations_text.insert(tk.END, f"{feature_name} ({recs[0]['change']}):\n", 'subheading')
+
+                            for rec in recs:
+                                self.recommendations_text.insert(tk.END, f"• ", 'normal')
+                                self.recommendations_text.insert(tk.END, f"{rec['text']}\n", 'normal')
+                                self.recommendations_text.insert(tk.END, f"  Action: ", 'light_text')
+                                self.recommendations_text.insert(tk.END, f"{rec['action']}\n", 'normal')
+                                self.recommendations_text.insert(tk.END, f"  Priority: ", 'light_text')
+                                self.recommendations_text.insert(tk.END, f"{rec['priority']}\n\n", 'normal')
 
         except Exception as e:
             logging.error(f"Error displaying recommendations: {str(e)}")
@@ -4940,6 +5295,10 @@ class AnalysisGUI:
     def generate_pdf(self, file_path, selected_content, selected_years, selected_departments):
         """Generate a PDF report with the selected content, years, and departments"""
         try:
+            # Add a flag to indicate we're generating a PDF - this will be used for optimizations
+            self._generating_pdf = True
+            self._cancel_pdf_export = False
+
             # Show progress dialog
             progress_window = tk.Toplevel(self.root)
             progress_window.title("Generating PDF")
@@ -4960,10 +5319,22 @@ class AnalysisGUI:
             status_label = ttk.Label(progress_frame, textvariable=status_var)
             status_label.pack(pady=10)
 
+            # Add cancel button to avoid getting stuck
+            def cancel_export():
+                self._cancel_pdf_export = True
+                status_var.set("Cancelling export...")
+                progress_window.update()
+
+            cancel_btn = ttk.Button(progress_frame, text="Cancel", command=cancel_export)
+            cancel_btn.pack(pady=(5, 0))
+
             # Update progress in a non-blocking way
             def update_status(message):
                 status_var.set(message)
                 progress_window.update()
+                progress_window.update_idletasks()
+                # Check if cancelled
+                return not self._cancel_pdf_export
 
             # Create the PDF document
             update_status("Creating PDF document...")
@@ -5078,17 +5449,28 @@ class AnalysisGUI:
                 content.append(Paragraph("Cluster Trends Over Time", heading_style))
                 content.append(Spacer(1, 0.1*inch))
 
-                # Calculate cluster trends data
+                # Calculate cluster trends data - OPTIMIZED VERSION
                 try:
-                    # Create a figure for cluster trends with optimized resolution
-                    trend_fig = plt.Figure(figsize=(10, 6), dpi=100)  # Lower DPI for faster rendering
+                    # Create a figure for cluster trends with greatly reduced resolution
+                    trend_fig = plt.Figure(figsize=(10, 6), dpi=72)  # Reduced DPI for faster rendering
                     trend_ax = trend_fig.add_subplot(111)
 
-                    # Create a dictionary to store trend data
+                    # Create a dictionary to store simplified trend data
                     trend_data = {}
 
-                    # Analyze each year
+                    # Analyze each year - with smaller samples and timeout protection
                     total_years = len(selected_years)
+
+                    # Define maximum sample size - much smaller for faster processing
+                    MAX_SAMPLE_SIZE = 500  # Reduced from 1000
+
+                    # Define simplified feature set if there are many features
+                    if len(self.selected_features) > 5:
+                        # Use only the first 5 features for performance
+                        simplified_features = [f for f in self.selected_features[:5] if f != 'department_name']
+                    else:
+                        simplified_features = [f for f in self.selected_features if f != 'department_name']
+
                     for i, year in enumerate(sorted(selected_years)):
                         if not update_status(f"Processing cluster data for year {year} ({i+1}/{total_years})..."):
                             progress_window.destroy()
@@ -5098,70 +5480,62 @@ class AnalysisGUI:
                             # Get filtered data for the year
                             year_df = self.get_filtered_data(year)
 
-                            if year_df is not None and not year_df.empty and len(self.selected_features) > 0:
-                                # Create clusters for this year - with performance optimizations
+                            if year_df is not None and not year_df.empty and len(simplified_features) > 0:
+                                # Create clusters for this year - with extreme performance optimizations
                                 try:
-                                    # Check if dataset is large - if so, sample it
-                                    if len(year_df) > 1000:
-                                        # Use a sample of at most 1000 rows for faster clustering
-                                        sample_size = min(1000, len(year_df))
-                                        year_df_sample = year_df.sample(n=sample_size, random_state=42)
-                                        clustered_df, kmeans, cluster_sizes, labels = self.cluster_events(year_df_sample, self.selected_features, return_labels=True)
-                                    else:
-                                        clustered_df, kmeans, cluster_sizes, labels = self.cluster_events(year_df, self.selected_features, return_labels=True)
+                                    # Always use a small sample for faster clustering
+                                    sample_size = min(MAX_SAMPLE_SIZE, len(year_df))
+                                    year_df_sample = year_df.sample(n=sample_size, random_state=42)
 
-                                    # Calculate cluster metrics
-                                    if kmeans is not None:
-                                        n_clusters = len(kmeans.cluster_centers_)
-                                        cluster_sizes = [np.sum(labels == i) for i in range(n_clusters)]
-                                        cluster_percentages = [size / len(labels) * 100 for size in cluster_sizes]
+                                    # Use simplified clustering for PDF generation (fewer iterations, lower tolerance)
+                                    # Extract selected features excluding 'department_name'
+                                    cluster_data = year_df_sample[simplified_features].copy()
 
-                                        # Store data for this year
-                                        trend_data[year] = {
-                                            'n_clusters': n_clusters,
-                                            'cluster_sizes': cluster_sizes,
-                                            'cluster_percentages': cluster_percentages,
-                                            'labels': labels,
-                                            'centers': kmeans.cluster_centers_
-                                        }
+                                    # Handle missing values with mean imputation
+                                    for feature in simplified_features:
+                                        cluster_data[feature] = pd.to_numeric(cluster_data[feature], errors='coerce')
 
-                                    # Calculate rating distribution for this year
-                                    # Simplify by only analyzing a subset of features for large datasets
-                                    features_to_analyze = self.selected_features
-                                    if len(self.selected_features) > 10:
-                                        features_to_analyze = self.selected_features[:10]  # Limit for performance
+                                    cluster_data = cluster_data.fillna(cluster_data.mean())
 
-                                    category_counts = {
+                                    # Skip standardization for speed and use fixed categories
+                                    # Use direct categorization based on means - much faster than KMeans
+                                    mean_ratings = cluster_data.mean(axis=1)
+
+                                    # Create simplified clusters based on rating categories
+                                    labels = pd.cut(mean_ratings,
+                                        bins=[-float('inf'), 0.74, 1.49, 2.24, float('inf')],
+                                        labels=[0, 1, 2, 3]).astype(str)
+
+                                    cluster_mapping = {
+                                        '0': 'Needs Improvement',
+                                        '1': 'Moderately Satisfactory',
+                                        '2': 'Satisfactory',
+                                        '3': 'Very Satisfactory'
+                                    }
+
+                                    # Map to readable labels
+                                    label_names = labels.map(cluster_mapping)
+
+                                    # Calculate distribution
+                                    counts = label_names.value_counts()
+
+                                    # Store simplified data for this year
+                                    trend_data[year] = {
                                         'Needs Improvement': 0,
                                         'Moderately Satisfactory': 0,
                                         'Satisfactory': 0,
                                         'Very Satisfactory': 0
                                     }
 
-                                    # Count ratings by category for this year
-                                    for feature in features_to_analyze:
-                                        if feature != 'department_name' and feature in year_df.columns:
-                                            values = year_df[feature].dropna()
-
-                                            # Use vectorized operations instead of multiple comparisons
-                                            ni_mask = values <= 0.74
-                                            ms_mask = (values > 0.74) & (values <= 1.49)
-                                            s_mask = (values > 1.49) & (values <= 2.24)
-                                            vs_mask = values > 2.24
-
-                                            category_counts['Needs Improvement'] += ni_mask.sum()
-                                            category_counts['Moderately Satisfactory'] += ms_mask.sum()
-                                            category_counts['Satisfactory'] += s_mask.sum()
-                                            category_counts['Very Satisfactory'] += vs_mask.sum()
-
-                                    # Convert to percentages
-                                    total = sum(category_counts.values())
-                                    if total > 0:
-                                        for category in category_counts:
-                                            trend_data[year][category] = category_counts[category] / total * 100
+                                    # Fill in available values
+                                    total = len(label_names)
+                                    for category in cluster_mapping.values():
+                                        if category in counts:
+                                            trend_data[year][category] = counts[category] / total * 100
 
                                 except Exception as e:
-                                    logging.error(f"Error calculating cluster trends for year {year}: {e}")
+                                    logging.error(f"Error calculating simplified cluster trends for year {year}: {e}")
+                                    # Continue with other years instead of failing completely
 
                     # Plot trend data if we have enough years
                     if len(trend_data) > 1:
@@ -5189,15 +5563,15 @@ class AnalysisGUI:
                                         # Use a default value if missing
                                         category_data[category].append(0)
 
-                            # Clear the figure and recreate it
+                            # Clear the figure and recreate it with low resolution
                             plt.close(trend_fig)
-                            trend_fig = plt.Figure(figsize=(10, 6), dpi=100)
+                            trend_fig = plt.Figure(figsize=(10, 6), dpi=72)  # Even lower DPI
                             trend_ax = trend_fig.add_subplot(111)
 
-                            # Plot lines with improved visibility
+                            # Plot lines with simplifications
                             for i, category in enumerate(categories):
                                 if len(years) == len(category_data[category]) and len(years) > 0:
-                                    trend_ax.plot(years, category_data[category], marker='o', markersize=8,
+                                    trend_ax.plot(years, category_data[category], marker='o', markersize=6,
                                                 linewidth=2, color=colors[i], label=category)
 
                             trend_ax.set_title('Rating Distribution Trends Across Years', fontsize=14)
@@ -5208,15 +5582,15 @@ class AnalysisGUI:
 
                             # Ensure y-axis shows percentages properly
                             trend_ax.set_ylim(0, 100)
-                            trend_ax.set_yticks(range(0, 101, 10))
+                            trend_ax.set_yticks(range(0, 101, 20))  # Fewer ticks
 
-                            # Add the plot to the PDF with explicit image capturing
+                            # Add the plot to the PDF with low-res image capturing
                             content.append(Paragraph("Rating Distribution Trends", subheading_style))
 
-                            # Use a more reliable way to capture the figure
+                            # Use a more reliable way to capture the figure with low resolution
                             img_data = io.BytesIO()
                             trend_fig.tight_layout()  # Ensure everything fits
-                            trend_fig.savefig(img_data, format='png', dpi=150, bbox_inches='tight')
+                            trend_fig.savefig(img_data, format='png', dpi=72, bbox_inches='tight')
                             img_data.seek(0)
 
                             # Add the image to content with explicit width/height
@@ -5225,7 +5599,7 @@ class AnalysisGUI:
                             content.append(Spacer(1, 0.2*inch))
 
                             # Print success message to logs
-                            logging.info("Successfully added cluster trends visualization to PDF")
+                            logging.info("Successfully added simplified cluster trends visualization to PDF")
 
                         except Exception as e:
                             logging.error(f"Error creating cluster trends visualization: {str(e)}")
@@ -5238,10 +5612,10 @@ class AnalysisGUI:
 
                 content.append(Spacer(1, 0.3*inch))
 
-            # Function to capture figure as an image
+            # Function to capture figure as an image with reduced resolution
             def capture_figure(fig):
                 img_data = io.BytesIO()
-                fig.savefig(img_data, format='png', dpi=100, bbox_inches='tight')  # Lower DPI for faster rendering
+                fig.savefig(img_data, format='png', dpi=72, bbox_inches='tight')  # Much lower DPI
                 img_data.seek(0)
                 return Image(img_data, width=9*inch, height=5*inch)
 
@@ -5591,6 +5965,233 @@ class AnalysisGUI:
 
                             # Log success
                             logging.info("Successfully added baseline comparison to PDF")
+
+                            # Add multi-year analysis if we have more than 2 years
+                            if len(selected_years) > 2:
+                                update_status("Adding multi-year comparison analysis...")
+
+                                # Add a heading
+                                content.append(Paragraph("Multi-Year Trend Analysis", heading_style))
+                                content.append(Spacer(1, 0.1*inch))
+
+                                # Add explanatory text
+                                content.append(Paragraph(
+                                    f"This analysis compares data across all {len(selected_years)} years " +
+                                    f"from {min(selected_years)} to {max(selected_years)}.",
+                                    normal_style))
+                                content.append(Spacer(1, 0.1*inch))
+
+                                # Get years and features for comparison
+                                years = sorted(selected_years)
+                                baseline_year = min(years)
+                                features = [f for f in self.selected_features if f != 'department_name']
+
+                                if features:
+                                    # Calculate means for each year and feature
+                                    yearly_means = {}
+                                    for year in years:
+                                        df = self.get_filtered_data(year)
+                                        if df is not None and not df.empty:
+                                            yearly_means[year] = {}
+                                            for feature in features:
+                                                if feature in df.columns:
+                                                    # Convert to numeric and handle missing values
+                                                    feature_data = pd.to_numeric(df[feature], errors='coerce')
+                                                    if not feature_data.isna().all():
+                                                        yearly_means[year][feature] = feature_data.mean()
+
+                                    # Create a figure for trend lines
+                                    trend_fig = plt.Figure(figsize=(10, 6), dpi=100)
+                                    trend_ax = trend_fig.add_subplot(111)
+
+                                    # Plot trend lines for each feature
+                                    for feature in features:
+                                        feature_values = []
+                                        for year in years:
+                                            if year in yearly_means and feature in yearly_means[year]:
+                                                feature_values.append(yearly_means[year][feature])
+                                            else:
+                                                # Use NaN for missing values
+                                                feature_values.append(float('nan'))
+
+                                        # Plot the line if we have enough data points
+                                        if any(not np.isnan(v) for v in feature_values):
+                                            trend_ax.plot(years, feature_values, marker='o',
+                                                         label=feature.replace('_', ' ').title())
+
+                                    # Set labels and title
+                                    trend_ax.set_xlabel('Year', fontsize=12)
+                                    trend_ax.set_ylabel('Rating Value', fontsize=12)
+                                    trend_ax.set_title('Feature Ratings Across Years', fontsize=14)
+                                    trend_ax.legend(loc='best')
+                                    trend_ax.grid(True, linestyle='--', alpha=0.7)
+
+                                    # Set y-axis to standard rating scale
+                                    trend_ax.set_ylim(0, 3)
+
+                                    # Adjust layout
+                                    trend_fig.tight_layout()
+
+                                    # Add the visualization to the PDF
+                                    trend_img_data = io.BytesIO()
+                                    trend_fig.savefig(trend_img_data, format='png', dpi=150, bbox_inches='tight')
+                                    trend_img_data.seek(0)
+                                    content.append(Image(trend_img_data, width=8*inch, height=4.5*inch))
+                                    content.append(Spacer(1, 0.2*inch))
+
+                                    # Create a table for year-by-year data
+                                    year_table_data = [['Feature'] + years]
+
+                                    for feature in features:
+                                        row = [feature.replace('_', ' ').title()]
+                                        for year in years:
+                                            if year in yearly_means and feature in yearly_means[year]:
+                                                row.append(f"{yearly_means[year][feature]:.2f}")
+                                            else:
+                                                row.append("N/A")
+                                        year_table_data.append(row)
+
+                                    # Add the year-by-year table to the PDF
+                                    year_table = Table(year_table_data)
+                                    year_table_style = TableStyle([
+                                        ('BACKGROUND', (0, 0), (-1, 0), '#add8e6'),  # lightblue header
+                                        ('TEXTCOLOR', (0, 0), (-1, 0), '#000000'),   # black text in header
+                                        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                        ('FONTSIZE', (0, 0), (-1, 0), 10),
+                                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                                        ('BACKGROUND', (0, 1), (-1, -1), '#ffffff'),  # white background for data
+                                        ('GRID', (0, 0), (-1, -1), 1, '#000000'),     # black grid
+                                        ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+                                        ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
+                                        ('FONTSIZE', (0, 1), (-1, -1), 9),
+                                    ])
+                                    year_table.setStyle(year_table_style)
+                                    content.append(year_table)
+                                    content.append(Spacer(1, 0.2*inch))
+
+                                    # Add interpretation of multi-year trends
+                                    content.append(Paragraph("Interpretation of Multi-Year Trends:", subheading_style))
+                                    content.append(Spacer(1, 0.1*inch))
+
+                                    # Calculate overall trends
+                                    improved_features = []
+                                    declined_features = []
+                                    stable_features = []
+
+                                    # Analyze each feature's trend
+                                    for feature in features:
+                                        first_value = None
+                                        last_value = None
+
+                                        if baseline_year in yearly_means and feature in yearly_means[baseline_year]:
+                                            first_value = yearly_means[baseline_year][feature]
+
+                                        if max(years) in yearly_means and feature in yearly_means[max(years)]:
+                                            last_value = yearly_means[max(years)][feature]
+
+                                        if first_value is not None and last_value is not None:
+                                            pct_change = ((last_value - first_value) / first_value) * 100 if first_value != 0 else 0
+
+                                            # Categorize based on change
+                                            if pct_change > 5:
+                                                improved_features.append((feature, pct_change))
+                                            elif pct_change < -5:
+                                                declined_features.append((feature, pct_change))
+                                            else:
+                                                stable_features.append((feature, pct_change))
+
+                                    # Add improved features
+                                    if improved_features:
+                                        content.append(Paragraph("Improving Features:", interpretation_style))
+
+                                        improved_features.sort(key=lambda x: x[1], reverse=True)
+                                        for feature, change in improved_features:
+                                            feature_name = feature.replace('_', ' ').title()
+                                            content.append(Paragraph(f"&#8226; {feature_name}: {change:+.1f}% improvement from {baseline_year} to {max(years)}", bullet_style))
+
+                                        content.append(Spacer(1, 0.1*inch))
+
+                                    # Add declined features
+                                    if declined_features:
+                                        content.append(Paragraph("Declining Features:", interpretation_style))
+
+                                        declined_features.sort(key=lambda x: x[1])
+                                        for feature, change in declined_features:
+                                            feature_name = feature.replace('_', ' ').title()
+                                            content.append(Paragraph(f"&#8226; {feature_name}: {change:.1f}% decline from {baseline_year} to {max(years)}", bullet_style))
+
+                                        content.append(Spacer(1, 0.1*inch))
+
+                                    # Add stable features
+                                    if stable_features:
+                                        content.append(Paragraph("Stable Features:", interpretation_style))
+
+                                        for feature, change in stable_features:
+                                            feature_name = feature.replace('_', ' ').title()
+                                            content.append(Paragraph(f"&#8226; {feature_name}: Relatively stable ({change:+.1f}%)", bullet_style))
+
+                                    content.append(Spacer(1, 0.2*inch))
+
+                                    # Add year-over-year analysis
+                                    content.append(Paragraph("Year-Over-Year Changes:", subheading_style))
+                                    content.append(Spacer(1, 0.1*inch))
+
+                                    # For each consecutive pair of years
+                                    for i in range(len(years) - 1):
+                                        year1 = years[i]
+                                        year2 = years[i + 1]
+
+                                        content.append(Paragraph(f"{year1} to {year2} Change:", interpretation_style))
+
+                                        year_changes = []
+                                        for feature in features:
+                                            if (year1 in yearly_means and feature in yearly_means[year1] and
+                                                year2 in yearly_means and feature in yearly_means[year2]):
+                                                value1 = yearly_means[year1][feature]
+                                                value2 = yearly_means[year2][feature]
+
+                                                pct_change = ((value2 - value1) / value1) * 100 if value1 != 0 else 0
+                                                year_changes.append((feature, pct_change))
+
+                                        # Sort changes by magnitude
+                                        year_changes.sort(key=lambda x: abs(x[1]), reverse=True)
+
+                                        # Show top changes
+                                        if year_changes:
+                                            for feature, change in year_changes[:5]:  # Show top 5 changes
+                                                feature_name = feature.replace('_', ' ').title()
+                                                if change > 0:
+                                                    content.append(Paragraph(f"&#8226; {feature_name}: {change:+.1f}% improvement", bullet_style))
+                                                else:
+                                                    content.append(Paragraph(f"&#8226; {feature_name}: {change:.1f}% decline", bullet_style))
+                                        else:
+                                            content.append(Paragraph("&#8226; No comparable data available", bullet_style))
+
+                                        content.append(Spacer(1, 0.1*inch))
+
+                                    # Add recommendations based on trends
+                                    content.append(Paragraph("Recommendations Based on Trends:", subheading_style))
+                                    content.append(Spacer(1, 0.1*inch))
+
+                                    if declined_features:
+                                        content.append(Paragraph("Areas Needing Attention:", interpretation_style))
+
+                                        for feature, change in declined_features[:3]:  # Focus on top 3 declining areas
+                                            feature_name = feature.replace('_', ' ').title()
+                                            content.append(Paragraph(f"&#8226; Focus on improving {feature_name} which has declined by {abs(change):.1f}%", bullet_style))
+
+                                        content.append(Spacer(1, 0.1*inch))
+
+                                    if improved_features:
+                                        content.append(Paragraph("Continue Successful Practices:", interpretation_style))
+
+                                        for feature, change in improved_features[:3]:  # Highlight top 3 improvements
+                                            feature_name = feature.replace('_', ' ').title()
+                                            content.append(Paragraph(f"&#8226; Maintain successful practices for {feature_name} which has improved by {change:.1f}%", bullet_style))
+
+                                content.append(Spacer(1, 0.3*inch))
+                                logging.info("Successfully added multi-year trend analysis to PDF")
                         else:
                             content.append(Paragraph("Could not generate baseline comparison: insufficient data in baseline or current year.", normal_style))
                     else:
@@ -5610,7 +6211,15 @@ class AnalysisGUI:
             # Show success message
             messagebox.showinfo("Export Successful", f"Report has been successfully exported to:\n{file_path}")
 
+            # Reset PDF generation flag
+            self._generating_pdf = False
+            self._cancel_pdf_export = False
+
         except Exception as e:
+            # Reset PDF generation flag
+            self._generating_pdf = False
+            self._cancel_pdf_export = False
+
             logging.error(f"Error in generate_pdf: {str(e)}")
             messagebox.showerror("Error", f"Error generating PDF: {str(e)}")
 
@@ -5766,6 +6375,150 @@ def interpret_ratings(avg_scores):
     )
 
     return "\n".join(interpretations)
+
+def generate_yearly_change_recommendations(comparison_data, threshold=-15.0):
+    """
+    Generate recommendations based on significant negative yearly changes in ratings.
+
+    Parameters:
+    - comparison_data (dict): Dictionary containing year-over-year changes for each feature
+    - threshold (float): Percentage threshold for considering a change significant negative (default: -15%)
+
+    Returns:
+    - dict: Dictionary of recommendations keyed by feature name
+    """
+    recommendations = {}
+
+    if not comparison_data:
+        return recommendations
+
+    # Standard recommendations for features with negative changes
+    base_recommendations = {
+        'Overall_Rating': [
+            {
+                'text': "Address declining overall satisfaction",
+                'action': "Form a task force to identify and address the root causes of declining satisfaction",
+                'priority': 'High'
+            }
+        ],
+        'Objectives_Met': [
+            {
+                'text': "Review objectives and delivery methods",
+                'action': "Conduct focused surveys to identify why objectives are not being met as effectively",
+                'priority': 'High'
+            }
+        ],
+        'Venue_Rating': [
+            {
+                'text': "Reassess venue suitability",
+                'action': "Conduct site evaluations and gather specific feedback about venue concerns",
+                'priority': 'Medium'
+            }
+        ],
+        'Schedule_Rating': [
+            {
+                'text': "Evaluate schedule effectiveness",
+                'action': "Review timing and duration of events, considering attendee feedback",
+                'priority': 'Medium'
+            }
+        ],
+        'Speaker_Rating': [
+            {
+                'text': "Review speaker selection process",
+                'action': "Implement enhanced speaker training and selection criteria",
+                'priority': 'High'
+            }
+        ],
+        'Content_Rating': [
+            {
+                'text': "Refresh content strategy",
+                'action': "Update content to include more current and relevant material",
+                'priority': 'High'
+            }
+        ],
+        'Materials_Rating': [
+            {
+                'text': "Improve quality of materials",
+                'action': "Redesign materials with professional assistance",
+                'priority': 'Medium'
+            }
+        ],
+        'Engagement_Rating': [
+            {
+                'text': "Enhance engagement strategies",
+                'action': "Incorporate more interactive elements and activities",
+                'priority': 'High'
+            }
+        ],
+        'Relevance_Rating': [
+            {
+                'text': "Update content for increased relevance",
+                'action': "Conduct needs assessment to align content with current needs",
+                'priority': 'High'
+            }
+        ],
+        'Food_Rating': [
+            {
+                'text': "Review catering service and options",
+                'action': "Consider alternative catering providers or menu options",
+                'priority': 'Low'
+            }
+        ],
+        'Technology_Rating': [
+            {
+                'text': "Upgrade technology infrastructure",
+                'action': "Assess technical requirements and implement improvements",
+                'priority': 'Medium'
+            }
+        ],
+        'Networking_Rating': [
+            {
+                'text': "Enhance networking opportunities",
+                'action': "Design structured networking activities",
+                'priority': 'Medium'
+            }
+        ],
+        'Value_Rating': [
+            {
+                'text': "Improve perceived value proposition",
+                'action': "Conduct cost-benefit analysis and adjust pricing or offerings",
+                'priority': 'High'
+            }
+        ],
+        'Allowance_Rating': [
+            {
+                'text': "Review allowance structure and amounts",
+                'action': "Benchmark allowances against industry standards and adjust accordingly",
+                'priority': 'Medium'
+            }
+        ]
+    }
+
+    # Generic recommendation for any feature not specifically covered
+    generic_recommendation = [
+        {
+            'text': "Address declining satisfaction in this area",
+            'action': "Investigate causes and implement targeted improvements",
+            'priority': 'Medium'
+        }
+    ]
+
+    # Create recommendations for features with significant negative changes
+    for feature, data in comparison_data.items():
+        pct_change = data.get('pct_change', 0)
+
+        # If the change is below the threshold (significant negative change)
+        if pct_change < threshold:
+            # Get feature-specific recommendations or use generic ones
+            feature_recs = base_recommendations.get(feature, generic_recommendation)
+
+            # Add change percentage to recommendations for context
+            for rec in feature_recs:
+                rec['change'] = f"{pct_change:.1f}%"
+
+            recommendations[feature] = feature_recs
+
+    return recommendations
 
 def main():
     try:
