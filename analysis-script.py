@@ -4,9 +4,10 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from mlxtend.frequent_patterns import apriori, association_rules
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QFileDialog, QLabel, QTabWidget, QComboBox, QSizePolicy, QSpacerItem, QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QTableWidget, QTableWidgetItem, QMessageBox, QScrollArea
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QFileDialog, QLabel, QTabWidget, QComboBox, QSizePolicy, QSpacerItem, QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QTableWidget, QTableWidgetItem, QMessageBox, QScrollArea, QInputDialog
 )
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QPixmap
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib as mpl
@@ -48,16 +49,28 @@ class RatingRangesDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle('Set Rating Ranges')
         self.setMinimumWidth(400)
-        layout = QFormLayout(self)
+        self.layout = QFormLayout(self)
         self.range_edits = []
         for label, (low, high) in ranges.items():
             edit = QLineEdit(f"{low},{high if high is not None else ''}")
-            layout.addRow(QLabel(label), edit)
+            self.layout.addRow(QLabel(label), edit)
             self.range_edits.append((label, edit))
+        # Add Rating button
+        self.add_rating_btn = QPushButton('Add Rating')
+        self.add_rating_btn.clicked.connect(self.add_rating_row)
+        self.layout.addRow(self.add_rating_btn)
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
-        layout.addWidget(self.button_box)
+        self.layout.addWidget(self.button_box)
+
+    def add_rating_row(self):
+        label, ok = QInputDialog.getText(self, 'Add Rating', 'Enter new rating label:')
+        if ok and label:
+            edit = QLineEdit("")
+            self.layout.insertRow(self.layout.rowCount() - 2, QLabel(label), edit)  # before Add/OK/Cancel
+            self.range_edits.append((label, edit))
+
     def get_ranges(self):
         new_ranges = {}
         for label, edit in self.range_edits:
@@ -183,11 +196,33 @@ class AnalysisApp(QWidget):
 
         # --- Top bar: Logo, Spacer, Exit Button ---
         top_bar = QHBoxLayout()
-        self.logo_label = QLabel('LOGO')  # Placeholder for logo
-        self.logo_label.setStyleSheet('font-size: 28px; font-weight: bold; color: #3366cc; padding: 4px 12px;')
-        self.logo_label.setFixedHeight(48)
+        self.logo_label = QLabel()
+        logo_path = os.path.join(os.path.dirname(__file__), 'spup-logo.png')
+        if os.path.exists(logo_path):
+            pixmap = QPixmap(logo_path)
+            pixmap = pixmap.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.logo_label.setPixmap(pixmap)
+            self.logo_label.setFixedSize(90, 90)
+        else:
+            self.logo_label.setText('LOGO')
+            self.logo_label.setStyleSheet('font-size: 28px; font-weight: bold; color: #3366cc; padding: 4px 12px;')
+            self.logo_label.setFixedHeight(48)
         self.logo_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         top_bar.addWidget(self.logo_label)
+
+        # Add university and app title text next to logo
+        title_layout = QVBoxLayout()
+        uni_label = QLabel('St. Paul University Philippines')
+        uni_label.setStyleSheet('font-size: 26px; font-weight: bold; color: #174ea6;')
+        uni_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        subtitle_label = QLabel('Event Feedback Analysis')
+        subtitle_label.setStyleSheet('font-size: 18px; font-style: italic; color: #2563eb;')
+        subtitle_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        title_layout.addWidget(uni_label)
+        title_layout.addWidget(subtitle_label)
+        title_layout.setSpacing(0)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        top_bar.addLayout(title_layout)
 
         top_bar.addItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
 
@@ -217,6 +252,50 @@ class AnalysisApp(QWidget):
         self.add_button.setFixedHeight(32)
         self.add_button.clicked.connect(self.add_more_csvs)
         file_dept_layout.addWidget(self.add_button)
+
+        # Add Set Rating Ranges button
+        self.rating_ranges_btn = QPushButton('Set Rating Ranges')
+        self.rating_ranges_btn.setStyleSheet('font-size: 16px; padding: 6px 12px;')
+        self.rating_ranges_btn.setFixedHeight(28)
+        self.rating_ranges_btn.clicked.connect(self.set_rating_ranges)
+        file_dept_layout.addWidget(self.rating_ranges_btn)
+
+        # Add Save/Load Project buttons
+        self.save_project_btn = QPushButton('Save Project')
+        self.save_project_btn.setStyleSheet('font-size: 16px; padding: 6px 12px;')
+        self.save_project_btn.setFixedHeight(28)
+        self.save_project_btn.clicked.connect(self.save_project)
+        file_dept_layout.addWidget(self.save_project_btn)
+        self.load_project_btn = QPushButton('Load Project')
+        self.load_project_btn.setStyleSheet('font-size: 16px; padding: 6px 12px;')
+        self.load_project_btn.setFixedHeight(28)
+        self.load_project_btn.clicked.connect(self.load_project)
+        file_dept_layout.addWidget(self.load_project_btn)
+
+        # Add Export to PDF button
+        self.export_pdf_btn = QPushButton('Export to PDF')
+        self.export_pdf_btn.setStyleSheet('font-size: 16px; padding: 6px 12px;')
+        self.export_pdf_btn.setFixedHeight(28)
+        self.export_pdf_btn.clicked.connect(self.export_to_pdf)
+        file_dept_layout.addWidget(self.export_pdf_btn)
+
+        # Add Dataset selection combo box
+        dataset_label = QLabel('Select Dataset:')
+        dataset_label.setStyleSheet('font-size: 18px; padding: 4px 8px;')
+        file_dept_layout.addWidget(dataset_label)
+        self.dataset_combo = QComboBox()
+        self.dataset_combo.setStyleSheet('font-size: 18px; min-width: 120px; padding: 6px 14px;')
+        self.dataset_combo.currentIndexChanged.connect(self.on_dataset_change)
+        self.dataset_combo.setEnabled(False)
+        self.dataset_combo.setFixedHeight(32)
+        file_dept_layout.addWidget(self.dataset_combo)
+
+        # Add Remove Dataset button
+        self.remove_dataset_btn = QPushButton('Remove Dataset')
+        self.remove_dataset_btn.setStyleSheet('font-size: 16px; padding: 6px 12px; background: #e74c3c; color: white;')
+        self.remove_dataset_btn.setFixedHeight(28)
+        self.remove_dataset_btn.clicked.connect(self.remove_selected_dataset)
+        file_dept_layout.addWidget(self.remove_dataset_btn)
 
         # Add Set Rating Ranges button
         self.rating_ranges_btn = QPushButton('Set Rating Ranges')
@@ -295,14 +374,20 @@ class AnalysisApp(QWidget):
 
         # --- Association Rules Tab ---
         self.arm_tab = QWidget()
-        self.arm_layout = QVBoxLayout()
+        self.arm_layout = QHBoxLayout()  # Changed to HBox for two columns
         self.arm_layout.setContentsMargins(0, 0, 0, 0)
         self.arm_layout.setSpacing(16)
         self.arm_figure = Figure(dpi=150)
         self.arm_canvas = FigureCanvas(self.arm_figure)
         self.arm_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.arm_canvas.setMinimumHeight(120)
-        self.arm_layout.addWidget(self.arm_canvas)
+        self.arm_layout.addWidget(self.arm_canvas, 2)
+        # Add ARM analysis text area
+        self.arm_analysis_text = QTextEdit()
+        self.arm_analysis_text.setReadOnly(True)
+        self.arm_analysis_text.setStyleSheet('font-size: 14px; padding: 8px;')
+        self.arm_analysis_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.arm_layout.addWidget(self.arm_analysis_text, 1)
         self.arm_tab.setLayout(self.arm_layout)
         self.tabs.addTab(self.arm_tab, "Association Rules")
         # --- ARM Results Tab ---
@@ -653,6 +738,21 @@ class AnalysisApp(QWidget):
                 nx.draw_networkx_edges(G, pos, ax=ax2, arrows=True, arrowstyle='-|>', width=[w*0.6 for w in edge_widths], edge_color="#b0b0ff")
                 ax2.set_title(f'Association Rule Network (edges: rules, width: lift) - {department}', fontsize=28)
                 ax2.axis('off')
+                # --- AI Analysis of Rules ---
+                rule_summaries = []
+                for _, row in rules.iterrows():
+                    rule_summaries.append(
+                        f"If [{', '.join(map(str, row['antecedents']))}] then [{', '.join(map(str, row['consequents']))}] (support={row['support']:.2f}, confidence={row['confidence']:.2f}, lift={row['lift']:.2f})"
+                    )
+                rules_text = '\n'.join(rule_summaries[:20])  # Limit to 20 rules for prompt
+                ai_arm_prompt = (
+                    f"Department: {department}\n"
+                    f"The following association rules were discovered (antecedent => consequent):\n"
+                    f"{rules_text}\n\n"
+                    "Analyze these rules. What are the most important or interesting patterns? What strengths or weaknesses do they reveal? Provide actionable insights."
+                )
+                ai_arm_analysis = self.call_groq_ai(ai_arm_prompt)
+                self.arm_analysis_text.setPlainText(ai_arm_analysis)
             else:
                 self.arm_table.setRowCount(1)
                 self.arm_table.setSpan(0, 0, 1, 5)
@@ -661,6 +761,7 @@ class AnalysisApp(QWidget):
                 ax2.set_title('Association Rule Network', fontsize=28)
                 ax2.text(0.5, 0.5, 'No association rules found', ha='center', va='center', fontsize=28)
                 ax2.set_axis_off()
+                self.arm_analysis_text.setPlainText('No association rules found to analyze.')
             self.arm_figure.tight_layout()
             self.arm_canvas.draw()
 
@@ -746,10 +847,24 @@ class AnalysisApp(QWidget):
                 axes = axes.flatten()
                 for i, col in enumerate(numeric_df.columns):
                     ax = axes[i]
-                    ax.hist(numeric_df[col].dropna(), bins=20, color='#3366cc', alpha=0.8)
-                    ax.set_title(col, fontsize=12)
+                    data = numeric_df[col].dropna()
+                    ax.hist(data, bins=20, color='#3366cc', alpha=0.8)
+                    mean_val = data.mean()
+                    # Determine rating label for mean (lower exclusive, upper inclusive)
+                    rating_label = None
+                    for label, (low, high) in self.rating_ranges.items():
+                        low_unbounded = (low is None) or (isinstance(low, float) and np.isneginf(low))
+                        high_unbounded = (high is None) or (isinstance(high, float) and np.isposinf(high))
+                        if (low_unbounded or mean_val > low) and (high_unbounded or mean_val <= high):
+                            rating_label = label
+                            break
+                    if rating_label is None:
+                        rating_label = 'Unrated'
+                    ax.set_title(f"{col}", fontsize=12)
                     ax.set_xlabel('Value', fontsize=10)
                     ax.set_ylabel('Frequency', fontsize=10)
+                    # Show rating as subtitle
+                    ax.annotate(f"Rating: {rating_label}", xy=(0.5, 0.92), xycoords='axes fraction', ha='center', fontsize=10, color='#2563eb', fontweight='bold')
                 # Hide unused subplots
                 for j in range(i+1, len(axes)):
                     self.hist_figure.delaxes(axes[j])
@@ -893,16 +1008,21 @@ class AnalysisApp(QWidget):
         import pickle
         fname, _ = QFileDialog.getSaveFileName(self, 'Save Project', '', 'Project Files (*.pkl)')
         if fname:
-            # Save datasets dict as pickle
+            # Save both datasets and rating_ranges as a dict
             with open(fname, 'wb') as f:
-                pickle.dump(self.datasets, f)
+                pickle.dump({'datasets': self.datasets, 'rating_ranges': self.rating_ranges}, f)
 
     def load_project(self):
         import pickle
         fname, _ = QFileDialog.getOpenFileName(self, 'Load Project', '', 'Project Files (*.pkl)')
         if fname:
             with open(fname, 'rb') as f:
-                self.datasets = pickle.load(f)
+                data = pickle.load(f)
+                if isinstance(data, dict) and 'datasets' in data:
+                    self.datasets = data['datasets']
+                    self.rating_ranges = data.get('rating_ranges', self.rating_ranges)
+                else:
+                    self.datasets = data
             if self.datasets:
                 self.df_all = pd.concat(self.datasets.values(), ignore_index=True)
                 # Update dataset combo box
@@ -1089,6 +1209,10 @@ class AnalysisApp(QWidget):
         add_fig(self.arm_figure, 'Association Rule Network')
         # ARM Results Table
         add_table(get_arm_table_data(), 'ARM Results Table')
+        # ARM Analysis Text
+        arm_analysis = self.arm_analysis_text.toPlainText() if hasattr(self, 'arm_analysis_text') else ''
+        if arm_analysis:
+            add_text(arm_analysis, 'Association Rules Analysis')
         # Descriptive Analysis Tab
         add_table(get_desc_table_data(), 'Descriptive Analysis Table')
         add_text(self.desc_text.toPlainText(), 'Descriptive Analysis (Categorical)')
@@ -1101,6 +1225,46 @@ class AnalysisApp(QWidget):
         add_text(self.trends_text.toPlainText(), 'Trends Analysis')
         add_page_number()
         c.save()
+
+    def remove_selected_dataset(self):
+        selected = self.dataset_combo.currentText()
+        if selected == 'All Datasets' or not self.dataset_combo.isEnabled():
+            QMessageBox.information(self, 'Remove Dataset', 'Please select a specific dataset to remove.')
+            return
+        if selected in self.datasets:
+            reply = QMessageBox.question(self, 'Remove Dataset', f"Are you sure you want to remove the dataset:\n{selected}?", QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                del self.datasets[selected]
+                if self.datasets:
+                    self.df_all = pd.concat(self.datasets.values(), ignore_index=True)
+                    self.dataset_combo.clear()
+                    self.dataset_combo.addItem('All Datasets')
+                    self.dataset_combo.addItems(list(self.datasets.keys()))
+                    self.dataset_combo.setEnabled(True)
+                    self.dataset_combo.setCurrentIndex(0)
+                    self.on_dataset_change()
+                    self.update_trends_tab()
+                else:
+                    self.df_all = pd.DataFrame()
+                    self.dataset_combo.clear()
+                    self.dataset_combo.setEnabled(False)
+                    self.dept_combo.clear()
+                    self.dept_combo.setEnabled(False)
+                    # Clear all analysis tabs
+                    self.cluster_figure.clear()
+                    self.cluster_canvas.draw()
+                    self.cluster_interpret_text.clear()
+                    self.arm_figure.clear()
+                    self.arm_canvas.draw()
+                    self.arm_table.setRowCount(0)
+                    self.desc_table.setRowCount(0)
+                    self.desc_text.clear()
+                    self.hist_figure.clear()
+                    self.hist_canvas.draw()
+                    self.recommend_text.clear()
+                    self.trends_figure.clear()
+                    self.trends_canvas.draw()
+                    self.trends_text.clear()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
