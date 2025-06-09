@@ -277,21 +277,19 @@ class AnalysisApp(QWidget):
 
         # --- Clustering Tab ---
         self.cluster_tab = QWidget()
-        self.cluster_layout = QVBoxLayout()
+        self.cluster_layout = QHBoxLayout()
         self.cluster_layout.setContentsMargins(0, 0, 0, 0)
         self.cluster_layout.setSpacing(16)
         self.cluster_figure = Figure(dpi=150)
         self.cluster_canvas = FigureCanvas(self.cluster_figure)
         self.cluster_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.cluster_canvas.setMinimumHeight(120)
-        self.cluster_layout.addWidget(self.cluster_canvas)
-        # Add Groq AI cluster interpretation text area
         self.cluster_interpret_text = QTextEdit()
         self.cluster_interpret_text.setReadOnly(True)
-        self.cluster_interpret_text.setMinimumHeight(40)
+        self.cluster_interpret_text.setMinimumWidth(320)
         self.cluster_interpret_text.setStyleSheet('font-size: 14px; padding: 8px;')
-        self.cluster_interpret_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
-        self.cluster_layout.addWidget(self.cluster_interpret_text)
+        self.cluster_interpret_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.cluster_layout.addWidget(self.cluster_canvas, 2)
+        self.cluster_layout.addWidget(self.cluster_interpret_text, 1)
         self.cluster_tab.setLayout(self.cluster_layout)
         self.tabs.addTab(self.cluster_tab, "Clustering")
 
@@ -331,24 +329,23 @@ class AnalysisApp(QWidget):
 
         # --- Descriptive Analysis Tab ---
         self.desc_tab = QWidget()
-        self.desc_layout = QVBoxLayout()
+        self.desc_layout = QHBoxLayout()
         self.desc_layout.setContentsMargins(0, 0, 0, 0)
         self.desc_layout.setSpacing(16)
-        # Table for feature ratings
+        # Table for all numeric stats
         self.desc_table = QTableWidget()
-        self.desc_table.setColumnCount(3)
-        self.desc_table.setHorizontalHeaderLabels(['Feature', 'Mean', 'Rating'])
+        self.desc_table.setColumnCount(7)
+        self.desc_table.setHorizontalHeaderLabels(['Feature', 'Min', 'Max', 'Mean', 'Median', 'Std', 'Shape'])
         self.desc_table.setStyleSheet('font-size: 14px;')
         self.desc_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.desc_table.setMinimumHeight(60)
-        self.desc_layout.addWidget(self.desc_table)
-        # Text area for categorical value counts
+        self.desc_table.setMinimumWidth(400)
+        # Text area for Groq AI analysis
         self.desc_text = QTextEdit()
         self.desc_text.setReadOnly(True)
-        self.desc_text.setMinimumHeight(40)
         self.desc_text.setStyleSheet('font-size: 14px; padding: 8px;')
-        self.desc_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
-        self.desc_layout.addWidget(self.desc_text)
+        self.desc_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.desc_layout.addWidget(self.desc_table, 2)
+        self.desc_layout.addWidget(self.desc_text, 1)
         self.desc_tab.setLayout(self.desc_layout)
         self.tabs.addTab(self.desc_tab, "Descriptive Analysis")
 
@@ -381,24 +378,18 @@ class AnalysisApp(QWidget):
 
         # --- Trends Tab ---
         self.trends_tab = QWidget()
-        self.trends_layout = QVBoxLayout()
+        self.trends_layout = QHBoxLayout()
         self.trends_layout.setContentsMargins(0, 0, 0, 0)
         self.trends_layout.setSpacing(16)
         self.trends_figure = Figure(dpi=150)
         self.trends_canvas = FigureCanvas(self.trends_figure)
         self.trends_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.trends_canvas.setMinimumHeight(120)
-        self.trends_layout.addWidget(self.trends_canvas)
-        # Add scrollable text area for Groq analysis
         self.trends_text = QTextEdit()
         self.trends_text.setReadOnly(True)
         self.trends_text.setStyleSheet('font-size: 14px; padding: 8px;')
-        self.trends_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
-        self.trends_text.setMaximumHeight(120)
-        self.trends_scroll = QScrollArea()
-        self.trends_scroll.setWidgetResizable(True)
-        self.trends_scroll.setWidget(self.trends_text)
-        self.trends_layout.addWidget(self.trends_scroll)
+        self.trends_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.trends_layout.addWidget(self.trends_canvas, 2)
+        self.trends_layout.addWidget(self.trends_text, 1)
         self.trends_tab.setLayout(self.trends_layout)
         self.tabs.addTab(self.trends_tab, "Trends")
 
@@ -462,11 +453,11 @@ class AnalysisApp(QWidget):
         selected = self.dataset_combo.currentText()
         self.current_dataset = selected
         if selected == 'All Datasets':
-            self.df_all = pd.concat(self.datasets.values(), ignore_index=True)
+            self.df_all = pd.concat(self.datasets.values(), ignore_index=True) if self.datasets else pd.DataFrame()
         else:
-            self.df_all = self.datasets[selected].copy()
+            self.df_all = self.datasets[selected].copy() if selected in self.datasets else pd.DataFrame()
         # Repopulate department combo and rerun analysis
-        if 'department_name' in self.df_all.columns:
+        if isinstance(self.df_all, pd.DataFrame) and not self.df_all.empty and 'department_name' in self.df_all.columns:
             dept_counts = Counter(self.df_all['department_name'].dropna())
             sorted_depts = [dept for dept, _ in dept_counts.most_common()]
             self.dept_combo.clear()
@@ -676,40 +667,84 @@ class AnalysisApp(QWidget):
             # --- DESCRIPTIVE ANALYSIS ---
             # Fill table for feature ratings
             self.desc_table.setRowCount(0)
-            avg_scores = numeric_df.mean() if not numeric_df.empty else pd.Series(dtype=float)
-            for feature, mean in avg_scores.items():
-                rating = None
-                for label, (low, high) in self.rating_ranges.items():
-                    if (low is None or mean >= low) and (high is None or mean <= high):
-                        rating = label
-                        break
-                row = self.desc_table.rowCount()
-                self.desc_table.insertRow(row)
-                self.desc_table.setItem(row, 0, QTableWidgetItem(str(feature)))
-                self.desc_table.setItem(row, 1, QTableWidgetItem(f"{mean:.2f}"))
-                self.desc_table.setItem(row, 2, QTableWidgetItem(str(rating)))
-            self.desc_table.resizeColumnsToContents()
-            self.desc_table.resizeRowsToContents()
+            if not numeric_df.empty:
+                for feature in numeric_df.columns:
+                    series = numeric_df[feature].dropna()
+                    if series.empty:
+                        continue
+                    minv, maxv = series.min(), series.max()
+                    meanv, medv = series.mean(), series.median()
+                    stdv = series.std()
+                    skew = series.skew()
+                    if abs(skew) < 0.5:
+                        shape = "symmetric"
+                    elif skew > 0.5:
+                        shape = "right-skewed"
+                    else:
+                        shape = "left-skewed"
+                    row = self.desc_table.rowCount()
+                    self.desc_table.insertRow(row)
+                    self.desc_table.setItem(row, 0, QTableWidgetItem(str(feature)))
+                    self.desc_table.setItem(row, 1, QTableWidgetItem(f"{minv:.2f}"))
+                    self.desc_table.setItem(row, 2, QTableWidgetItem(f"{maxv:.2f}"))
+                    self.desc_table.setItem(row, 3, QTableWidgetItem(f"{meanv:.2f}"))
+                    self.desc_table.setItem(row, 4, QTableWidgetItem(f"{medv:.2f}"))
+                    self.desc_table.setItem(row, 5, QTableWidgetItem(f"{stdv:.2f}"))
+                    self.desc_table.setItem(row, 6, QTableWidgetItem(shape))
+                self.desc_table.resizeColumnsToContents()
+                self.desc_table.resizeRowsToContents()
             # Categorical summary as text
             desc_output = []
             desc_output.append(f"Descriptive Analysis for: {department}\n\n")
             cat_df = df.select_dtypes(include=['object', 'category'])
+            cat_summary = []
             if not cat_df.empty:
                 desc_output.append("Categorical Columns Value Counts:\n")
                 for col in cat_df.columns:
-                    desc_output.append(f"{col} value counts:\n{cat_df[col].value_counts().to_string()}\n")
+                    val_counts = cat_df[col].value_counts().to_string()
+                    desc_output.append(f"{col} value counts:\n{val_counts}\n")
+                    cat_summary.append(f"{col} value counts:\n{val_counts}")
+            # --- Groq AI call for descriptive analysis ---
+            # Prepare numeric stats summary
+            numeric_summary = []
+            if not numeric_df.empty:
+                for feature in numeric_df.columns:
+                    series = numeric_df[feature].dropna()
+                    if series.empty:
+                        continue
+                    minv, maxv = series.min(), series.max()
+                    meanv, medv = series.mean(), series.median()
+                    stdv = series.std()
+                    skew = series.skew()
+                    if abs(skew) < 0.5:
+                        shape = "symmetric"
+                    elif skew > 0.5:
+                        shape = "right-skewed"
+                    else:
+                        shape = "left-skewed"
+                    numeric_summary.append(
+                        f"{feature}: min={minv:.2f}, max={maxv:.2f}, mean={meanv:.2f}, median={medv:.2f}, std={stdv:.2f}, shape={shape}"
+                    )
+            prompt = (
+                f"Department: {department}\n"
+                f"Numeric feature summary:\n" + '\n'.join(numeric_summary) +
+                ("\n\nCategorical summary:\n" + '\n'.join(cat_summary) if cat_summary else "") +
+                "\n\nBased on these, provide insights, trends, and actionable recommendations."
+            )
+            ai_desc_analysis = self.call_groq_ai(prompt)
+            desc_output.append("\nAI Analysis:\n" + ai_desc_analysis)
             self.desc_text.setPlainText('\n'.join(desc_output))
 
             # --- HISTOGRAM TAB ---
             self.hist_figure.clear()
-            max_hist = 6
             if not numeric_df.empty:
                 ncols = 2
-                nrows = 3
-                show_cols = numeric_df.columns[:max_hist]
+                n_numeric = len(numeric_df.columns)
+                nrows = (n_numeric + ncols - 1) // ncols
+                self.hist_figure.set_size_inches(8, max(3, nrows * 2.2))
                 axes = self.hist_figure.subplots(nrows, ncols, squeeze=False)
                 axes = axes.flatten()
-                for i, col in enumerate(show_cols):
+                for i, col in enumerate(numeric_df.columns):
                     ax = axes[i]
                     ax.hist(numeric_df[col].dropna(), bins=20, color='#3366cc', alpha=0.8)
                     ax.set_title(col, fontsize=12)
@@ -718,8 +753,6 @@ class AnalysisApp(QWidget):
                 # Hide unused subplots
                 for j in range(i+1, len(axes)):
                     self.hist_figure.delaxes(axes[j])
-                if len(numeric_df.columns) > max_hist:
-                    self.hist_figure.suptitle(f"Showing first {max_hist} of {len(numeric_df.columns)} numeric columns", fontsize=24, color='red')
             else:
                 self.hist_figure.text(0.5, 0.5, 'No numeric columns to plot.', ha='center', va='center', fontsize=28)
             self.hist_canvas.draw()
@@ -908,15 +941,11 @@ class AnalysisApp(QWidget):
         # Helper to add images
         def add_fig(fig, title):
             nonlocal y, page_num
-            c.setFont('Helvetica-Bold', 22)
-            y_space = 32
-            if y < 120:
-                add_page_number()
-                c.showPage()
-                y = height - 50
-                page_num += 1
-            c.drawString(left_margin, y, title)
-            y -= y_space
+            # Always start a new page for the plot
+            add_page_number()
+            c.showPage()
+            page_num += 1
+            y = height - 50
             import time
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmpfile:
                 fig.savefig(tmpfile.name, bbox_inches='tight', dpi=180)
@@ -924,28 +953,35 @@ class AnalysisApp(QWidget):
             img = utils.ImageReader(tmpfile_path)
             iw, ih = img.getSize()
             aspect = ih / iw
+            # Make the plot fill the page (except for margins and page number)
             maxw = width - left_margin - right_margin
-            maxh = 180
-            iw, ih = min(iw, maxw), min(int(maxw * aspect), maxh)
-            if y - ih < 60:
-                add_page_number()
-                c.showPage()
-                y = height - 50 - y_space
-                page_num += 1
-                c.setFont('Helvetica-Bold', 22)
-                c.drawString(left_margin, y, title)
-                y -= y_space
-            c.drawImage(tmpfile_path, left_margin, y - ih, width=iw, height=ih)
-            y -= ih + 28
+            maxh = height - 80  # leave space for page number
+            # Scale to fit while preserving aspect ratio
+            scale = min(maxw / iw, maxh / ih)
+            iw_scaled, ih_scaled = iw * scale, ih * scale
+            x0 = (width - iw_scaled) / 2
+            y0 = (height - ih_scaled) / 2
+            c.drawImage(tmpfile_path, x0, y0, width=iw_scaled, height=ih_scaled)
+            y = height - 50  # reset y for next section
             time.sleep(0.1)
             try:
                 os.unlink(tmpfile_path)
             except PermissionError:
                 pass
+            # Always start a new page for the analysis/table after the plot
+            add_page_number()
+            c.showPage()
+            page_num += 1
+            y = height - 50
 
         # Helper to add text
         def add_text(text, title, monospace=False):
             nonlocal y, page_num
+            # Always start a new page for text/analysis
+            add_page_number()
+            c.showPage()
+            page_num += 1
+            y = height - 50
             c.setFont('Helvetica-Bold', 18)
             y_space = 24
             if y < 80:
@@ -973,6 +1009,11 @@ class AnalysisApp(QWidget):
         # Helper to add a table (for ARM and Descriptive)
         def add_table(data, title):
             nonlocal y, page_num
+            # Always start a new page for table/analysis
+            add_page_number()
+            c.showPage()
+            page_num += 1
+            y = height - 50
             c.setFont('Helvetica-Bold', 18)
             y_space = 24
             if y < 120:
@@ -1025,7 +1066,7 @@ class AnalysisApp(QWidget):
         # Descriptive Table as a real table
         def get_desc_table_data():
             import re
-            headers = ['Feature', 'Mean', 'Rating']
+            headers = ['Feature', 'Min', 'Max', 'Mean', 'Median', 'Std', 'Shape']
             data = [headers]
             for row in range(self.desc_table.rowCount()):
                 row_vals = []
