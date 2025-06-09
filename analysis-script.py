@@ -14,6 +14,19 @@ import networkx as nx
 import sys
 from collections import Counter
 import re
+from sklearn.metrics import silhouette_score
+import numpy as np
+import matplotlib.pyplot as plt
+import time
+import os
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import landscape
+from reportlab.lib.utils import ImageReader
+from reportlab.lib import utils
+import tempfile
+from reportlab.platypus import Table, TableStyle
+from reportlab.lib import colors
 
 # --- CONFIG ---
 N_CLUSTERS = 3  # Number of clusters for KMeans
@@ -21,7 +34,14 @@ MIN_SUPPORT = 0.1  # Minimum support for Apriori
 MIN_CONFIDENCE = 0.5  # Minimum confidence for association rules
 
 # Set global font size for matplotlib
-mpl.rcParams.update({'font.size': 22, 'axes.titlesize': 28, 'axes.labelsize': 24, 'xtick.labelsize': 20, 'ytick.labelsize': 20, 'legend.fontsize': 20})
+mpl.rcParams.update({
+    'font.size': 12,
+    'axes.titlesize': 14,
+    'axes.labelsize': 12,
+    'xtick.labelsize': 10,
+    'ytick.labelsize': 10,
+    'legend.fontsize': 10
+})
 
 class RatingRangesDialog(QDialog):
     def __init__(self, ranges, parent=None):
@@ -75,19 +95,19 @@ class AnalysisApp(QWidget):
             }
             QTabWidget::pane {
                 border: 2px solid #d0d7de;
-                border-radius: 18px;
+                border-radius: 14px;
                 background: #fff;
-                margin: 8px;
+                margin: 4px;
             }
             QTabBar::tab {
                 background: #e9ecef;
                 border: 1px solid #d0d7de;
-                border-radius: 12px 12px 0 0;
-                min-width: 180px;
-                min-height: 60px;
-                font-size: 32px;
-                padding: 16px 32px;
-                margin-right: 4px;
+                border-radius: 10px 10px 0 0;
+                min-width: 100px;
+                min-height: 36px;
+                font-size: 18px;
+                padding: 6px 16px;
+                margin-right: 2px;
             }
             QTabBar::tab:selected {
                 background: #fff;
@@ -100,9 +120,9 @@ class AnalysisApp(QWidget):
             QPushButton {
                 background: #2563eb;
                 color: #fff;
-                border-radius: 12px;
-                font-size: 32px;
-                padding: 12px 36px;
+                border-radius: 8px;
+                font-size: 18px;
+                padding: 6px 18px;
                 border: none;
             }
             QPushButton:hover {
@@ -114,31 +134,31 @@ class AnalysisApp(QWidget):
             QComboBox {
                 background: #fff;
                 border: 1.5px solid #d0d7de;
-                border-radius: 10px;
-                font-size: 32px;
-                padding: 10px 20px;
-                min-width: 300px;
+                border-radius: 7px;
+                font-size: 18px;
+                padding: 6px 14px;
+                min-width: 120px;
             }
             QComboBox QAbstractItemView {
                 background: #fff;
                 selection-background-color: #e9ecef;
-                font-size: 32px;
+                font-size: 18px;
             }
             QLabel {
-                font-size: 32px;
+                font-size: 18px;
             }
             QTextEdit {
                 background: #f8fafc;
                 border: 1.5px solid #d0d7de;
-                border-radius: 10px;
-                font-size: 28px;
-                padding: 16px;
+                border-radius: 7px;
+                font-size: 16px;
+                padding: 8px;
             }
             QTableWidget {
                 background: #fff;
                 border: 1.5px solid #d0d7de;
-                border-radius: 10px;
-                font-size: 28px;
+                border-radius: 7px;
+                font-size: 16px;
                 gridline-color: #d0d7de;
                 selection-background-color: #c7d7f5;
                 selection-color: #111;
@@ -147,10 +167,10 @@ class AnalysisApp(QWidget):
             QHeaderView::section {
                 background: #e9ecef;
                 font-weight: bold;
-                font-size: 30px;
-                border-radius: 8px;
+                font-size: 16px;
+                border-radius: 6px;
                 border: 1px solid #d0d7de;
-                padding: 8px;
+                padding: 4px;
             }
         ''')
 
@@ -164,17 +184,17 @@ class AnalysisApp(QWidget):
         # --- Top bar: Logo, Spacer, Exit Button ---
         top_bar = QHBoxLayout()
         self.logo_label = QLabel('LOGO')  # Placeholder for logo
-        self.logo_label.setStyleSheet('font-size: 48px; font-weight: bold; color: #3366cc; padding: 10px 30px;')
-        self.logo_label.setFixedHeight(100)
+        self.logo_label.setStyleSheet('font-size: 28px; font-weight: bold; color: #3366cc; padding: 4px 12px;')
+        self.logo_label.setFixedHeight(48)
         self.logo_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         top_bar.addWidget(self.logo_label)
 
         top_bar.addItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
 
         self.exit_button = QPushButton('Exit')
-        self.exit_button.setStyleSheet('font-size: 32px; padding: 18px 48px; background: #e74c3c; color: white; border-radius: 16px;')
-        self.exit_button.setFixedHeight(80)
-        self.exit_button.setFixedWidth(180)
+        self.exit_button.setStyleSheet('font-size: 18px; padding: 8px 18px; background: #e74c3c; color: white; border-radius: 10px;')
+        self.exit_button.setFixedHeight(36)
+        self.exit_button.setFixedWidth(80)
         self.exit_button.clicked.connect(self.close)
         top_bar.addWidget(self.exit_button)
         main_layout.addLayout(top_bar)
@@ -182,76 +202,76 @@ class AnalysisApp(QWidget):
         # --- File selection and department selection ---
         file_dept_layout = QHBoxLayout()
         self.label = QLabel('Select one or more CSV files to analyze:')
-        self.label.setStyleSheet('font-size: 32px; padding: 10px 20px;')
+        self.label.setStyleSheet('font-size: 18px; padding: 4px 8px;')
         file_dept_layout.addWidget(self.label)
 
         self.button = QPushButton('Open CSV(s)')
-        self.button.setStyleSheet('font-size: 32px; padding: 12px 36px;')
-        self.button.setFixedHeight(60)
+        self.button.setStyleSheet('font-size: 18px; padding: 6px 18px;')
+        self.button.setFixedHeight(32)
         self.button.clicked.connect(self.open_csvs)
         file_dept_layout.addWidget(self.button)
 
         # Add More CSV(s) button
         self.add_button = QPushButton('Add More CSV(s)')
-        self.add_button.setStyleSheet('font-size: 32px; padding: 12px 36px;')
-        self.add_button.setFixedHeight(60)
+        self.add_button.setStyleSheet('font-size: 18px; padding: 6px 18px;')
+        self.add_button.setFixedHeight(32)
         self.add_button.clicked.connect(self.add_more_csvs)
         file_dept_layout.addWidget(self.add_button)
 
         # Add Set Rating Ranges button
         self.rating_ranges_btn = QPushButton('Set Rating Ranges')
-        self.rating_ranges_btn.setStyleSheet('font-size: 28px; padding: 10px 30px;')
-        self.rating_ranges_btn.setFixedHeight(60)
+        self.rating_ranges_btn.setStyleSheet('font-size: 16px; padding: 6px 12px;')
+        self.rating_ranges_btn.setFixedHeight(28)
         self.rating_ranges_btn.clicked.connect(self.set_rating_ranges)
         file_dept_layout.addWidget(self.rating_ranges_btn)
 
         # Add Save/Load Project buttons
         self.save_project_btn = QPushButton('Save Project')
-        self.save_project_btn.setStyleSheet('font-size: 28px; padding: 10px 30px;')
-        self.save_project_btn.setFixedHeight(60)
+        self.save_project_btn.setStyleSheet('font-size: 16px; padding: 6px 12px;')
+        self.save_project_btn.setFixedHeight(28)
         self.save_project_btn.clicked.connect(self.save_project)
         file_dept_layout.addWidget(self.save_project_btn)
         self.load_project_btn = QPushButton('Load Project')
-        self.load_project_btn.setStyleSheet('font-size: 28px; padding: 10px 30px;')
-        self.load_project_btn.setFixedHeight(60)
+        self.load_project_btn.setStyleSheet('font-size: 16px; padding: 6px 12px;')
+        self.load_project_btn.setFixedHeight(28)
         self.load_project_btn.clicked.connect(self.load_project)
         file_dept_layout.addWidget(self.load_project_btn)
 
         # Add Export to PDF button
         self.export_pdf_btn = QPushButton('Export to PDF')
-        self.export_pdf_btn.setStyleSheet('font-size: 28px; padding: 10px 30px;')
-        self.export_pdf_btn.setFixedHeight(60)
+        self.export_pdf_btn.setStyleSheet('font-size: 16px; padding: 6px 12px;')
+        self.export_pdf_btn.setFixedHeight(28)
         self.export_pdf_btn.clicked.connect(self.export_to_pdf)
         file_dept_layout.addWidget(self.export_pdf_btn)
 
         # Add Dataset selection combo box
         dataset_label = QLabel('Select Dataset:')
-        dataset_label.setStyleSheet('font-size: 32px; padding: 10px 20px;')
+        dataset_label.setStyleSheet('font-size: 18px; padding: 4px 8px;')
         file_dept_layout.addWidget(dataset_label)
         self.dataset_combo = QComboBox()
-        self.dataset_combo.setStyleSheet('font-size: 32px; min-width: 300px; padding: 10px 20px;')
+        self.dataset_combo.setStyleSheet('font-size: 18px; min-width: 120px; padding: 6px 14px;')
         self.dataset_combo.currentIndexChanged.connect(self.on_dataset_change)
         self.dataset_combo.setEnabled(False)
-        self.dataset_combo.setFixedHeight(60)
+        self.dataset_combo.setFixedHeight(32)
         file_dept_layout.addWidget(self.dataset_combo)
 
         file_dept_layout.addItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
 
         dept_label = QLabel('Select Department:')
-        dept_label.setStyleSheet('font-size: 32px; padding: 10px 20px;')
+        dept_label.setStyleSheet('font-size: 18px; padding: 4px 8px;')
         file_dept_layout.addWidget(dept_label)
         self.dept_combo = QComboBox()
-        self.dept_combo.setStyleSheet('font-size: 32px; min-width: 300px; padding: 10px 20px;')
+        self.dept_combo.setStyleSheet('font-size: 18px; min-width: 120px; padding: 6px 14px;')
         self.dept_combo.currentIndexChanged.connect(self.on_department_change)
         self.dept_combo.setEnabled(False)
-        self.dept_combo.setFixedHeight(60)
+        self.dept_combo.setFixedHeight(32)
         file_dept_layout.addWidget(self.dept_combo)
 
         main_layout.addLayout(file_dept_layout)
 
         # Tabs for Clustering and Association Rules
         self.tabs = QTabWidget()
-        self.tabs.setStyleSheet('font-size: 32px; min-height: 60px;')
+        self.tabs.setStyleSheet('font-size: 18px; min-height: 36px;')
         self.tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         main_layout.addWidget(self.tabs)
 
@@ -263,7 +283,15 @@ class AnalysisApp(QWidget):
         self.cluster_figure = Figure(dpi=150)
         self.cluster_canvas = FigureCanvas(self.cluster_figure)
         self.cluster_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.cluster_canvas.setMinimumHeight(120)
         self.cluster_layout.addWidget(self.cluster_canvas)
+        # Add Groq AI cluster interpretation text area
+        self.cluster_interpret_text = QTextEdit()
+        self.cluster_interpret_text.setReadOnly(True)
+        self.cluster_interpret_text.setMinimumHeight(40)
+        self.cluster_interpret_text.setStyleSheet('font-size: 14px; padding: 8px;')
+        self.cluster_interpret_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
+        self.cluster_layout.addWidget(self.cluster_interpret_text)
         self.cluster_tab.setLayout(self.cluster_layout)
         self.tabs.addTab(self.cluster_tab, "Clustering")
 
@@ -275,7 +303,7 @@ class AnalysisApp(QWidget):
         self.arm_figure = Figure(dpi=150)
         self.arm_canvas = FigureCanvas(self.arm_figure)
         self.arm_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.arm_canvas.setMinimumHeight(500)  # Increased height for ARM plot
+        self.arm_canvas.setMinimumHeight(120)
         self.arm_layout.addWidget(self.arm_canvas)
         self.arm_tab.setLayout(self.arm_layout)
         self.tabs.addTab(self.arm_tab, "Association Rules")
@@ -287,9 +315,9 @@ class AnalysisApp(QWidget):
         self.arm_table = QTableWidget()
         self.arm_table.setColumnCount(5)
         self.arm_table.setHorizontalHeaderLabels(['Antecedents', 'Consequents', 'Support', 'Confidence', 'Lift'])
-        self.arm_table.setStyleSheet('font-size: 24px;')
+        self.arm_table.setStyleSheet('font-size: 14px;')
         self.arm_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.arm_table.setMinimumHeight(350)
+        self.arm_table.setMinimumHeight(120)
         self.arm_table.setWordWrap(True)
         self.arm_table.setAlternatingRowColors(True)
         self.arm_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -310,15 +338,15 @@ class AnalysisApp(QWidget):
         self.desc_table = QTableWidget()
         self.desc_table.setColumnCount(3)
         self.desc_table.setHorizontalHeaderLabels(['Feature', 'Mean', 'Rating'])
-        self.desc_table.setStyleSheet('font-size: 28px;')
+        self.desc_table.setStyleSheet('font-size: 14px;')
         self.desc_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.desc_table.setMinimumHeight(220)
+        self.desc_table.setMinimumHeight(60)
         self.desc_layout.addWidget(self.desc_table)
         # Text area for categorical value counts
         self.desc_text = QTextEdit()
         self.desc_text.setReadOnly(True)
-        self.desc_text.setMinimumHeight(120)
-        self.desc_text.setStyleSheet('font-size: 28px; padding: 16px;')
+        self.desc_text.setMinimumHeight(40)
+        self.desc_text.setStyleSheet('font-size: 14px; padding: 8px;')
         self.desc_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
         self.desc_layout.addWidget(self.desc_text)
         self.desc_tab.setLayout(self.desc_layout)
@@ -331,8 +359,8 @@ class AnalysisApp(QWidget):
         self.recommend_layout.setSpacing(16)
         self.recommend_text = QTextEdit()
         self.recommend_text.setReadOnly(True)
-        self.recommend_text.setMinimumHeight(220)
-        self.recommend_text.setStyleSheet('font-size: 28px; padding: 16px;')
+        self.recommend_text.setMinimumHeight(40)
+        self.recommend_text.setStyleSheet('font-size: 14px; padding: 8px;')
         self.recommend_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.recommend_layout.addWidget(self.recommend_text)
         self.recommend_tab.setLayout(self.recommend_layout)
@@ -346,6 +374,7 @@ class AnalysisApp(QWidget):
         self.hist_figure = Figure(dpi=150, constrained_layout=True)
         self.hist_canvas = FigureCanvas(self.hist_figure)
         self.hist_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.hist_canvas.setMinimumHeight(120)
         self.hist_layout.addWidget(self.hist_canvas)
         self.hist_tab.setLayout(self.hist_layout)
         self.tabs.addTab(self.hist_tab, "Histograms")
@@ -358,13 +387,14 @@ class AnalysisApp(QWidget):
         self.trends_figure = Figure(dpi=150)
         self.trends_canvas = FigureCanvas(self.trends_figure)
         self.trends_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.trends_canvas.setMinimumHeight(120)
         self.trends_layout.addWidget(self.trends_canvas)
         # Add scrollable text area for Groq analysis
         self.trends_text = QTextEdit()
         self.trends_text.setReadOnly(True)
-        self.trends_text.setStyleSheet('font-size: 28px; padding: 16px;')
+        self.trends_text.setStyleSheet('font-size: 14px; padding: 8px;')
         self.trends_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
-        self.trends_text.setMaximumHeight(350)
+        self.trends_text.setMaximumHeight(120)
         self.trends_scroll = QScrollArea()
         self.trends_scroll.setWidgetResizable(True)
         self.trends_scroll.setWidget(self.trends_text)
@@ -480,24 +510,101 @@ class AnalysisApp(QWidget):
                 ax1.text(0.5, 0.5, 'No numeric columns for clustering',
                          ha='center', va='center', fontsize=24)
                 ax1.set_axis_off()
+                self.cluster_interpret_text.setPlainText('No numeric columns for clustering, so no cluster interpretation.')
             else:
                 scaler = StandardScaler()
                 X_scaled = scaler.fit_transform(numeric_df)
-                kmeans = KMeans(n_clusters=N_CLUSTERS, random_state=42)
+                # --- Elbow and Silhouette Method for k ---
+                n_samples = X_scaled.shape[0]
+                max_k = min(8, n_samples-1) if n_samples > 2 else 2
+                inertias = []
+                silhouettes = []
+                k_range = list(range(2, max_k+1))
+                for k in k_range:
+                    kmeans_tmp = KMeans(n_clusters=k, random_state=42, n_init=10)
+                    labels_tmp = kmeans_tmp.fit_predict(X_scaled)
+                    inertias.append(kmeans_tmp.inertia_)
+                    # Silhouette only if k < n_samples
+                    if n_samples > k:
+                        silhouettes.append(silhouette_score(X_scaled, labels_tmp))
+                    else:
+                        silhouettes.append(float('-inf'))
+                # Choose k with highest silhouette score
+                best_k_idx = int(np.argmax(silhouettes))
+                best_k = k_range[best_k_idx]
+                # --- Show elbow and silhouette plots in popup ---
+                elbow_fig, (ax_elbow, ax_sil) = plt.subplots(1, 2, figsize=(12, 5))
+                ax_elbow.plot(k_range, inertias, marker='o')
+                ax_elbow.set_title('Elbow Method (Inertia)')
+                ax_elbow.set_xlabel('k')
+                ax_elbow.set_ylabel('Inertia')
+                ax_sil.plot(k_range, silhouettes, marker='o', color='green')
+                ax_sil.set_title('Silhouette Score')
+                ax_sil.set_xlabel('k')
+                ax_sil.set_ylabel('Silhouette')
+                ax_sil.axvline(best_k, color='red', linestyle='--', label=f'Chosen k={best_k}')
+                ax_sil.legend()
+                elbow_fig.tight_layout()
+                # Show popup
+                class PlotPopup(QDialog):
+                    def __init__(self, fig, parent=None):
+                        super().__init__(parent)
+                        self.setWindowTitle('K Selection: Elbow & Silhouette')
+                        layout = QVBoxLayout(self)
+                        canvas = FigureCanvas(Figure(figsize=(12, 5)))
+                        layout.addWidget(canvas)
+                        # Draw the matplotlib figure onto the canvas
+                        tmp_ax1 = canvas.figure.add_subplot(1,2,1)
+                        tmp_ax2 = canvas.figure.add_subplot(1,2,2)
+                        for line in ax_elbow.get_lines():
+                            tmp_ax1.plot(line.get_xdata(), line.get_ydata(), marker='o')
+                        tmp_ax1.set_title(ax_elbow.get_title())
+                        tmp_ax1.set_xlabel(ax_elbow.get_xlabel())
+                        tmp_ax1.set_ylabel(ax_elbow.get_ylabel())
+                        for line in ax_sil.get_lines():
+                            tmp_ax2.plot(line.get_xdata(), line.get_ydata(), marker='o', color='green')
+                        for vline in ax_sil.get_lines()[1:]:
+                            tmp_ax2.axvline(x=best_k, color='red', linestyle='--', label=f'Chosen k={best_k}')
+                        tmp_ax2.set_title(ax_sil.get_title())
+                        tmp_ax2.set_xlabel(ax_sil.get_xlabel())
+                        tmp_ax2.set_ylabel(ax_sil.get_ylabel())
+                        tmp_ax2.legend()
+                        canvas.figure.tight_layout()
+                popup = PlotPopup(elbow_fig, self)
+                popup.setMinimumWidth(900)
+                popup.setMinimumHeight(500)
+                popup.show()
+                # --- Use best_k for KMeans ---
+                kmeans = KMeans(n_clusters=best_k, random_state=42, n_init=10)
                 clusters = kmeans.fit_predict(X_scaled)
                 df['Cluster'] = clusters
                 # PCA for 2D visualization
                 if numeric_df.shape[1] >= 2:
                     pca = PCA(n_components=2)
                     X_pca = pca.fit_transform(X_scaled)
-                    ax1.scatter(X_pca[:, 0], X_pca[:, 1], c=clusters, cmap='tab10', alpha=0.7, s=120)
+                    ax1.scatter(X_pca[:, 0], X_pca[:, 1], c=clusters, cmap='tab10', alpha=0.7, s=36)
                     ax1.set_xlabel('PCA 1')
                     ax1.set_ylabel('PCA 2')
-                    ax1.set_title(f'KMeans Clustering (PCA) - {department}')
+                    ax1.set_title(f'KMeans Clustering (PCA, k={best_k}) - {department}')
                 else:
                     ax1.text(0.5, 0.5, 'Not enough numeric features for PCA plot',
                              ha='center', va='center', fontsize=24)
                     ax1.set_axis_off()
+                # --- Groq AI Cluster Interpretation ---
+                centers = kmeans.cluster_centers_
+                feature_names = list(numeric_df.columns)
+                cluster_summary = []
+                for i, center in enumerate(centers):
+                    summary = f"Cluster {i+1}:\n" + '\n'.join([f"  {fname}: {val:.2f}" for fname, val in zip(feature_names, center)])
+                    cluster_summary.append(summary)
+                cluster_prompt = (
+                    f"Department: {department}\n"
+                    f"KMeans clustering was performed on the following features: {', '.join(feature_names)}.\n"
+                    f"Here are the cluster centers (feature means for each cluster):\n" + '\n\n'.join(cluster_summary) +
+                    f"\n\nInterpret what each cluster represents in plain language. Give each group a short descriptive label and summarize the main characteristics. The value of k (number of clusters) was chosen as {best_k} using the elbow and silhouette methods."
+                )
+                ai_cluster_interpret = self.call_groq_ai(cluster_prompt)
+                self.cluster_interpret_text.setPlainText(ai_cluster_interpret)
             self.cluster_figure.tight_layout()
             self.cluster_canvas.draw()
 
@@ -550,9 +657,9 @@ class AnalysisApp(QWidget):
                 pos = nx.spring_layout(G, k=0.7, seed=42)
                 edge_lifts = [G[u][v]['lift'] for u, v in G.edges()]
                 edge_widths = [4 + 4 * (l - min(edge_lifts)) / (max(edge_lifts) - min(edge_lifts) + 1e-6) if len(edge_lifts) > 1 else 4 for l in edge_lifts]
-                nx.draw_networkx_nodes(G, pos, ax=ax2, node_size=1800, node_color="#7fa7ff")
-                nx.draw_networkx_labels(G, pos, ax=ax2, font_size=22)
-                nx.draw_networkx_edges(G, pos, ax=ax2, arrows=True, arrowstyle='-|>', width=edge_widths, edge_color="#b0b0ff")
+                nx.draw_networkx_nodes(G, pos, ax=ax2, node_size=500, node_color="#7fa7ff")
+                nx.draw_networkx_labels(G, pos, ax=ax2, font_size=10)
+                nx.draw_networkx_edges(G, pos, ax=ax2, arrows=True, arrowstyle='-|>', width=[w*0.6 for w in edge_widths], edge_color="#b0b0ff")
                 ax2.set_title(f'Association Rule Network (edges: rules, width: lift) - {department}', fontsize=28)
                 ax2.axis('off')
             else:
@@ -605,9 +712,9 @@ class AnalysisApp(QWidget):
                 for i, col in enumerate(show_cols):
                     ax = axes[i]
                     ax.hist(numeric_df[col].dropna(), bins=20, color='#3366cc', alpha=0.8)
-                    ax.set_title(col, fontsize=22)
-                    ax.set_xlabel('Value', fontsize=18)
-                    ax.set_ylabel('Frequency', fontsize=18)
+                    ax.set_title(col, fontsize=12)
+                    ax.set_xlabel('Value', fontsize=10)
+                    ax.set_ylabel('Frequency', fontsize=10)
                 # Hide unused subplots
                 for j in range(i+1, len(axes)):
                     self.hist_figure.delaxes(axes[j])
@@ -620,9 +727,13 @@ class AnalysisApp(QWidget):
             # --- RECOMMENDATIONS TAB ---
             self.update_recommendations_tab()
 
+            # --- Save elbow and silhouette plots for export ---
+            self.elbow_sil_fig = elbow_fig
+
         except Exception as e:
             self.cluster_figure.clear()
             self.cluster_canvas.draw()
+            self.cluster_interpret_text.setPlainText(f"Error: {e}")
             # Show error in ARM table
             self.arm_table.setRowCount(1)
             self.arm_table.setSpan(0, 0, 1, 5)
@@ -719,13 +830,13 @@ class AnalysisApp(QWidget):
         ax = self.trends_figure.add_subplot(111)
         colors = [c for c in mpl.colormaps['tab10'].colors]
         for i, (feature, means) in enumerate(feature_means.items()):
-            ax.plot(years, means, marker='o', label=feature, color=colors[i % len(colors)])
+            ax.plot(years, means, marker='o', label=feature, color=colors[i % len(colors)], linewidth=1.2, markersize=5)
             # Highlight baseline (oldest year)
-            ax.scatter(years[0], means[0], s=200, color=colors[i % len(colors)], edgecolor='black', zorder=5)
-        ax.set_xlabel('Year')
-        ax.set_ylabel('Mean Value')
-        ax.set_title('Feature Means Across Years (Baseline: Oldest Year)')
-        ax.legend(fontsize=16)
+            ax.scatter(years[0], means[0], s=36, color=colors[i % len(colors)], edgecolor='black', zorder=5)
+        ax.set_xlabel('Year', fontsize=10)
+        ax.set_ylabel('Mean Value', fontsize=10)
+        ax.set_title('Feature Means Across Years (Baseline: Oldest Year)', fontsize=12)
+        ax.legend(fontsize=8)
         ax.grid(True, alpha=0.3)
         self.trends_figure.tight_layout()
         self.trends_canvas.draw()
@@ -771,70 +882,174 @@ class AnalysisApp(QWidget):
                 self.update_trends_tab()
 
     def export_to_pdf(self):
-        from PyQt5.QtWidgets import QFileDialog
-        from reportlab.lib.pagesizes import letter
-        from reportlab.pdfgen import canvas
-        from reportlab.lib.utils import ImageReader
-        from reportlab.lib import utils
-        import tempfile
-        import os
         fname, _ = QFileDialog.getSaveFileName(self, 'Export to PDF', '', 'PDF Files (*.pdf)')
         if not fname:
             return
-        c = canvas.Canvas(fname, pagesize=letter)
-        width, height = letter
-        y = height - 40
-        c.setFont('Helvetica-Bold', 24)
-        c.drawString(40, y, 'Clustering & Association Rule Mining Report')
-        y -= 40
-        c.setFont('Helvetica', 16)
-        c.drawString(40, y, f"Department: {self.dept_combo.currentText()}")
-        y -= 30
-        c.drawString(40, y, f"Dataset: {self.dataset_combo.currentText()}")
-        y -= 40
+        page_size = landscape(letter)
+        c = canvas.Canvas(fname, pagesize=page_size)
+        width, height = page_size
+        left_margin = 60
+        right_margin = 60
+        y = height - 50
+        page_num = 1
+        def add_page_number():
+            c.setFont('Helvetica', 10)
+            c.drawRightString(width - right_margin, 20, f"Page {page_num}")
+
+        c.setFont('Helvetica-Bold', 28)
+        c.drawString(left_margin, y, 'Clustering & Association Rule Mining Report')
+        y -= 44
+        c.setFont('Helvetica', 18)
+        c.drawString(left_margin, y, f"Department: {self.dept_combo.currentText()}")
+        y -= 28
+        c.drawString(left_margin, y, f"Dataset: {self.dataset_combo.currentText()}")
+        y -= 36
+
         # Helper to add images
         def add_fig(fig, title):
-            nonlocal y
-            c.setFont('Helvetica-Bold', 18)
-            c.drawString(40, y, title)
-            y -= 24
+            nonlocal y, page_num
+            c.setFont('Helvetica-Bold', 22)
+            y_space = 32
+            if y < 120:
+                add_page_number()
+                c.showPage()
+                y = height - 50
+                page_num += 1
+            c.drawString(left_margin, y, title)
+            y -= y_space
+            import time
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmpfile:
-                fig.savefig(tmpfile.name, bbox_inches='tight')
-                img = utils.ImageReader(tmpfile.name)
-                iw, ih = img.getSize()
-                aspect = ih / iw
-                maxw = width - 80
-                maxh = 320
-                iw, ih = min(iw, maxw), min(int(maxw * aspect), maxh)
-                c.drawImage(tmpfile.name, 40, y - ih, width=iw, height=ih)
-                y -= ih + 24
-                os.unlink(tmpfile.name)
+                fig.savefig(tmpfile.name, bbox_inches='tight', dpi=180)
+                tmpfile_path = tmpfile.name
+            img = utils.ImageReader(tmpfile_path)
+            iw, ih = img.getSize()
+            aspect = ih / iw
+            maxw = width - left_margin - right_margin
+            maxh = 180
+            iw, ih = min(iw, maxw), min(int(maxw * aspect), maxh)
+            if y - ih < 60:
+                add_page_number()
+                c.showPage()
+                y = height - 50 - y_space
+                page_num += 1
+                c.setFont('Helvetica-Bold', 22)
+                c.drawString(left_margin, y, title)
+                y -= y_space
+            c.drawImage(tmpfile_path, left_margin, y - ih, width=iw, height=ih)
+            y -= ih + 28
+            time.sleep(0.1)
+            try:
+                os.unlink(tmpfile_path)
+            except PermissionError:
+                pass
+
         # Helper to add text
-        def add_text(text, title):
-            nonlocal y
+        def add_text(text, title, monospace=False):
+            nonlocal y, page_num
             c.setFont('Helvetica-Bold', 18)
-            c.drawString(40, y, title)
-            y -= 24
-            c.setFont('Helvetica', 12)
+            y_space = 24
+            if y < 80:
+                add_page_number()
+                c.showPage()
+                y = height - 50
+                page_num += 1
+            c.drawString(left_margin, y, title)
+            y -= y_space
+            font = 'Courier' if monospace else 'Helvetica'
+            c.setFont(font, 11)
+            max_line_len = int((width - left_margin - right_margin) / 6.5)  # ~6.5 px per char
             for line in text.split('\n'):
-                c.drawString(40, y, line[:120])
-                y -= 16
-                if y < 80:
-                    c.showPage()
-                    y = height - 40
-                    c.setFont('Helvetica', 12)
-            y -= 16
+                for i in range(0, len(line), max_line_len):
+                    c.drawString(left_margin, y, line[i:i+max_line_len])
+                    y -= 13
+                    if y < 60:
+                        add_page_number()
+                        c.showPage()
+                        y = height - 50
+                        c.setFont(font, 11)
+                        page_num += 1
+            y -= 10
+
+        # Helper to add a table (for ARM and Descriptive)
+        def add_table(data, title):
+            nonlocal y, page_num
+            c.setFont('Helvetica-Bold', 18)
+            y_space = 24
+            if y < 120:
+                add_page_number()
+                c.showPage()
+                y = height - 50
+                page_num += 1
+            c.drawString(left_margin, y, title)
+            y -= y_space
+            # Create Table
+            table = Table(data, repeatRows=1)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.black),
+                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
+                ('FONTSIZE', (0,0), (-1,-1), 10),
+                ('BOTTOMPADDING', (0,0), (-1,0), 8),
+                ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+            ]))
+            # Estimate table height
+            table_width, table_height = table.wrapOn(c, width - left_margin - right_margin, y)
+            if y - table_height < 60:
+                add_page_number()
+                c.showPage()
+                y = height - 50 - y_space
+                page_num += 1
+                c.setFont('Helvetica-Bold', 18)
+                c.drawString(left_margin, y, title)
+                y -= y_space
+            table.drawOn(c, left_margin, y - table_height)
+            y -= table_height + 18
+
+        # ARM Results Table as a real table
+        def get_arm_table_data():
+            import re
+            headers = [self.arm_table.horizontalHeaderItem(i).text() for i in range(self.arm_table.columnCount())]
+            headers = [re.sub(r'[^\x20-\x7E]', '', h) for h in headers]
+            data = [headers]
+            for row in range(self.arm_table.rowCount()):
+                row_items = []
+                for col in range(self.arm_table.columnCount()):
+                    item = self.arm_table.item(row, col)
+                    val = item.text() if item else ""
+                    val = re.sub(r'[^\x20-\x7E]', '', val)
+                    row_items.append(val)
+                data.append(row_items)
+            return data
+        # Descriptive Table as a real table
+        def get_desc_table_data():
+            import re
+            headers = ['Feature', 'Mean', 'Rating']
+            data = [headers]
+            for row in range(self.desc_table.rowCount()):
+                row_vals = []
+                for col in range(self.desc_table.columnCount()):
+                    val = self.desc_table.item(row, col).text()
+                    val = re.sub(r'[^\x20-\x7E]', '', val)
+                    row_vals.append(val)
+                data.append(row_vals)
+            return data
+
         # Clustering Tab
         add_fig(self.cluster_figure, 'Clustering (PCA)')
+        # Cluster Interpretation
+        add_text(self.cluster_interpret_text.toPlainText(), 'Cluster Interpretation')
+        # Elbow & Silhouette Plots (if available)
+        elbow_sil_fig = getattr(self, 'elbow_sil_fig', None)
+        if elbow_sil_fig is not None:
+            add_fig(elbow_sil_fig, 'Elbow & Silhouette Plots for k Selection')
         # Association Rules Tab
         add_fig(self.arm_figure, 'Association Rule Network')
-        add_text(self.arm_text.toPlainText(), 'Association Rules Summary')
+        # ARM Results Table
+        add_table(get_arm_table_data(), 'ARM Results Table')
         # Descriptive Analysis Tab
-        # Table as text
-        desc_table_text = 'Feature\tMean\tRating\n'
-        for row in range(self.desc_table.rowCount()):
-            desc_table_text += '\t'.join(self.desc_table.item(row, col).text() for col in range(self.desc_table.columnCount())) + '\n'
-        add_text(desc_table_text, 'Descriptive Analysis Table')
+        add_table(get_desc_table_data(), 'Descriptive Analysis Table')
         add_text(self.desc_text.toPlainText(), 'Descriptive Analysis (Categorical)')
         # Histograms Tab
         add_fig(self.hist_figure, 'Histograms')
@@ -842,7 +1057,8 @@ class AnalysisApp(QWidget):
         add_text(self.recommend_text.toPlainText(), 'Recommendations')
         # Trends Tab
         add_fig(self.trends_figure, 'Trends')
-        add_text(self.trends_text.toPlainText(), 'Trends Analysis (Groq AI)')
+        add_text(self.trends_text.toPlainText(), 'Trends Analysis')
+        add_page_number()
         c.save()
 
 if __name__ == '__main__':
