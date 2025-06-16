@@ -28,6 +28,49 @@ from reportlab.lib import utils
 import tempfile
 from reportlab.platypus import Table, TableStyle
 from reportlab.lib import colors
+from dotenv import load_dotenv
+
+def get_app_path():
+    """Get the application path, works for both script and executable"""
+    if getattr(sys, 'frozen', False):
+        # If the application is run as a bundle (executable)
+        return os.path.dirname(sys.executable)
+    else:
+        # If the application is run as a script
+        return os.path.dirname(os.path.abspath(__file__))
+
+def load_config():
+    """Load configuration from .env file or create default if not exists"""
+    app_path = get_app_path()
+    env_path = os.path.join(app_path, '.env')
+
+    # Default configuration
+    config = {
+        'LOGO_PATH': 'spup-logo.png',
+        'UNIVERSITY_NAME': 'St. Paul University Philippines',
+        'APP_TITLE': 'Event Feedback Analysis'
+    }
+
+    # Try to load from .env file
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        config['LOGO_PATH'] = os.getenv('LOGO_PATH', config['LOGO_PATH'])
+        config['UNIVERSITY_NAME'] = os.getenv('UNIVERSITY_NAME', config['UNIVERSITY_NAME'])
+        config['APP_TITLE'] = os.getenv('APP_TITLE', config['APP_TITLE'])
+    else:
+        # Create default .env file if it doesn't exist
+        with open(env_path, 'w') as f:
+            for key, value in config.items():
+                f.write(f"{key}={value}\n")
+
+    # Handle logo path
+    if not os.path.isabs(config['LOGO_PATH']):
+        config['LOGO_PATH'] = os.path.join(app_path, config['LOGO_PATH'])
+
+    return config
+
+# Load configuration
+CONFIG = load_config()
 
 # --- CONFIG ---
 N_CLUSTERS = 3  # Number of clusters for KMeans
@@ -52,9 +95,19 @@ class RatingRangesDialog(QDialog):
         self.layout = QFormLayout(self)
         self.range_edits = []
         for label, (low, high) in ranges.items():
-            edit = QLineEdit(f"{low},{high if high is not None else ''}")
-            self.layout.addRow(QLabel(label), edit)
-            self.range_edits.append((label, edit))
+            # Create a horizontal layout for each rating
+            rating_layout = QHBoxLayout()
+            # Add name edit field
+            name_edit = QLineEdit(label)
+            name_edit.setPlaceholderText("Rating name")
+            rating_layout.addWidget(name_edit)
+            # Add range edit field
+            range_edit = QLineEdit(f"{low},{high if high is not None else ''}")
+            range_edit.setPlaceholderText("min,max")
+            rating_layout.addWidget(range_edit)
+            # Add to form layout
+            self.layout.addRow(QLabel("Rating:"), rating_layout)
+            self.range_edits.append((name_edit, range_edit))
         # Add Rating button
         self.add_rating_btn = QPushButton('Add Rating')
         self.add_rating_btn.clicked.connect(self.add_rating_row)
@@ -65,16 +118,27 @@ class RatingRangesDialog(QDialog):
         self.layout.addWidget(self.button_box)
 
     def add_rating_row(self):
-        label, ok = QInputDialog.getText(self, 'Add Rating', 'Enter new rating label:')
-        if ok and label:
-            edit = QLineEdit("")
-            self.layout.insertRow(self.layout.rowCount() - 2, QLabel(label), edit)  # before Add/OK/Cancel
-            self.range_edits.append((label, edit))
+        # Create a horizontal layout for the new rating
+        rating_layout = QHBoxLayout()
+        # Add name edit field
+        name_edit = QLineEdit()
+        name_edit.setPlaceholderText("Rating name")
+        rating_layout.addWidget(name_edit)
+        # Add range edit field
+        range_edit = QLineEdit()
+        range_edit.setPlaceholderText("min,max")
+        rating_layout.addWidget(range_edit)
+        # Add to form layout before the Add button
+        self.layout.insertRow(self.layout.rowCount() - 2, QLabel("Rating:"), rating_layout)
+        self.range_edits.append((name_edit, range_edit))
 
     def get_ranges(self):
         new_ranges = {}
-        for label, edit in self.range_edits:
-            text = edit.text().replace(' ', '')
+        for name_edit, range_edit in self.range_edits:
+            name = name_edit.text().strip()
+            if not name:  # Skip if no name provided
+                continue
+            text = range_edit.text().replace(' ', '')
             if ',' in text:
                 low, high = text.split(',', 1)
                 try:
@@ -85,11 +149,11 @@ class RatingRangesDialog(QDialog):
                     high = float(high) if high != '' else None
                 except:
                     high = None
-                new_ranges[label] = (low, high)
+                new_ranges[name] = (low, high)
         return new_ranges
 
 class AnalysisApp(QWidget):
-    def __init__(self):
+    def __init__(self, logo_path=None, university_name="St. Paul University Philippines", app_title="Event Feedback Analysis"):
         super().__init__()
         self.setWindowTitle('Clustering & Association Rule Mining')
         self.setWindowFlags(Qt.FramelessWindowHint)
@@ -98,6 +162,11 @@ class AnalysisApp(QWidget):
         screen = QApplication.primaryScreen()
         screen_width = screen.size().width()
         self.setMaximumWidth(screen_width)
+
+        # Store customization settings
+        self.logo_path = logo_path
+        self.university_name = university_name
+        self.app_title = app_title
 
         # --- Modern Light Theme Stylesheet ---
         self.setStyleSheet('''
@@ -197,9 +266,8 @@ class AnalysisApp(QWidget):
         # --- Top bar: Logo, Spacer, Exit Button ---
         top_bar = QHBoxLayout()
         self.logo_label = QLabel()
-        logo_path = os.path.join(os.path.dirname(__file__), 'spup-logo.png')
-        if os.path.exists(logo_path):
-            pixmap = QPixmap(logo_path)
+        if self.logo_path and os.path.exists(self.logo_path):
+            pixmap = QPixmap(self.logo_path)
             pixmap = pixmap.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.logo_label.setPixmap(pixmap)
             self.logo_label.setFixedSize(90, 90)
@@ -212,10 +280,10 @@ class AnalysisApp(QWidget):
 
         # Add university and app title text next to logo
         title_layout = QVBoxLayout()
-        uni_label = QLabel('St. Paul University Philippines')
+        uni_label = QLabel(self.university_name)
         uni_label.setStyleSheet('font-size: 26px; font-weight: bold; color: #174ea6;')
         uni_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        subtitle_label = QLabel('Event Feedback Analysis')
+        subtitle_label = QLabel(self.app_title)
         subtitle_label.setStyleSheet('font-size: 18px; font-style: italic; color: #2563eb;')
         subtitle_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         title_layout.addWidget(uni_label)
@@ -904,14 +972,16 @@ class AnalysisApp(QWidget):
         features = []
         for row in range(self.desc_table.rowCount()):
             feature = self.desc_table.item(row, 0).text()
-            mean = self.desc_table.item(row, 1).text()
-            rating = self.desc_table.item(row, 2).text()
-            features.append(f"{feature}: mean={mean}, rating={rating}")
+            mean = self.desc_table.item(row, 3).text()  # Mean value
+            rating = self.desc_table.item(row, 2).text()  # Max rating
+            features.append(f"{feature}: mean={mean}, max_rating={rating}")
         department = self.dept_combo.currentText() if self.dept_combo.isEnabled() else 'All Departments'
         prompt = (
             f"Department: {department}\n"
-            f"Feature summary (mean and rating):\n" + '\n'.join(features) +
-            "\n\nBased on these, give recommendations for improvement, strengths to maintain, and any actionable insights."
+            f"Feature summary (mean scores and maximum possible rating):\n" + '\n'.join(features) +
+            "\n\nNote: Each feature is rated on a scale from 0 to the maximum rating shown. "
+            "For example, if max_rating=3.00, then scores can range from 0 to 3.00.\n\n"
+            "Based on these scores, give recommendations for improvement, strengths to maintain, and any actionable insights."
         )
         ai_response = self.call_groq_ai(prompt)
         self.recommend_text.setPlainText(ai_response)
@@ -925,7 +995,7 @@ class AnalysisApp(QWidget):
         client = Groq(api_key="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")
         try:
             completion = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="meta-llama/llama-4-scout-17b-16e-instruct",
                 messages=[
                     {
                         "role": "user",
@@ -1268,6 +1338,11 @@ class AnalysisApp(QWidget):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    window = AnalysisApp()
+    # Use configuration from CONFIG
+    window = AnalysisApp(
+        logo_path=CONFIG['LOGO_PATH'],
+        university_name=CONFIG['UNIVERSITY_NAME'],
+        app_title=CONFIG['APP_TITLE']
+    )
     window.show()
     sys.exit(app.exec_())
