@@ -4,7 +4,7 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from mlxtend.frequent_patterns import apriori, association_rules
 from PyQt5.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QFileDialog, QLabel, QTabWidget, QComboBox, QSizePolicy, QSpacerItem, QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QTableWidget, QTableWidgetItem, QMessageBox, QScrollArea, QInputDialog
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QFileDialog, QLabel, QTabWidget, QComboBox, QSizePolicy, QSpacerItem, QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QTableWidget, QTableWidgetItem, QMessageBox, QScrollArea, QInputDialog, QToolButton, QMenu, QAction
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap
@@ -156,12 +156,16 @@ class AnalysisApp(QWidget):
     def __init__(self, logo_path=None, university_name="St. Paul University Philippines", app_title="Event Feedback Analysis"):
         super().__init__()
         self.setWindowTitle('Clustering & Association Rule Mining')
-        self.setWindowFlags(Qt.FramelessWindowHint)
-        self.showFullScreen()
-        # Get screen width dynamically
-        screen = QApplication.primaryScreen()
-        screen_width = screen.size().width()
-        self.setMaximumWidth(screen_width)
+        # Set fixed size for 1920x1080 screens
+        self.setWindowFlags(Qt.Window)
+        self.setFixedSize(1920, 1080)
+        screen_width = 1920
+        screen_height = 1080
+        # Optionally center the window
+        qr = self.frameGeometry()
+        cp = QApplication.desktop().screen().rect().center()
+        qr.moveCenter(cp)
+        self.move(qr.topLeft())
 
         # Store customization settings
         self.logo_path = logo_path
@@ -179,17 +183,17 @@ class AnalysisApp(QWidget):
                 border: 2px solid #d0d7de;
                 border-radius: 14px;
                 background: #fff;
-                margin: 4px;
+                margin: 2px;
             }
             QTabBar::tab {
                 background: #e9ecef;
                 border: 1px solid #d0d7de;
                 border-radius: 10px 10px 0 0;
-                min-width: 100px;
-                min-height: 36px;
-                font-size: 18px;
-                padding: 6px 16px;
-                margin-right: 2px;
+                min-width: 80px;
+                min-height: 28px;
+                font-size: 14px;
+                padding: 3px 10px;
+                margin-right: 1px;
             }
             QTabBar::tab:selected {
                 background: #fff;
@@ -203,8 +207,8 @@ class AnalysisApp(QWidget):
                 background: #2563eb;
                 color: #fff;
                 border-radius: 8px;
-                font-size: 18px;
-                padding: 6px 18px;
+                font-size: 14px;
+                padding: 4px 10px;
                 border: none;
             }
             QPushButton:hover {
@@ -217,30 +221,30 @@ class AnalysisApp(QWidget):
                 background: #fff;
                 border: 1.5px solid #d0d7de;
                 border-radius: 7px;
-                font-size: 18px;
-                padding: 6px 14px;
-                min-width: 120px;
+                font-size: 14px;
+                padding: 4px 8px;
+                min-width: 90px;
             }
             QComboBox QAbstractItemView {
                 background: #fff;
                 selection-background-color: #e9ecef;
-                font-size: 18px;
+                font-size: 14px;
             }
             QLabel {
-                font-size: 18px;
+                font-size: 14px;
             }
             QTextEdit {
                 background: #f8fafc;
                 border: 1.5px solid #d0d7de;
                 border-radius: 7px;
-                font-size: 16px;
-                padding: 8px;
+                font-size: 13px;
+                padding: 4px;
             }
             QTableWidget {
                 background: #fff;
                 border: 1.5px solid #d0d7de;
                 border-radius: 7px;
-                font-size: 16px;
+                font-size: 13px;
                 gridline-color: #d0d7de;
                 selection-background-color: #c7d7f5;
                 selection-color: #111;
@@ -249,19 +253,20 @@ class AnalysisApp(QWidget):
             QHeaderView::section {
                 background: #e9ecef;
                 font-weight: bold;
-                font-size: 16px;
+                font-size: 13px;
                 border-radius: 6px;
                 border: 1px solid #d0d7de;
-                padding: 4px;
+                padding: 2px;
             }
         ''')
 
         main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(40, 40, 40, 40)
-        main_layout.setSpacing(20)
-        # Set max width for main layout container
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(6)
         self.setMinimumWidth(1200)
         self.setMaximumWidth(screen_width)
+        self.setMinimumHeight(800)
+        self.setMaximumHeight(screen_height)
 
         # --- Top bar: Logo, Spacer, Exit Button ---
         top_bar = QHBoxLayout()
@@ -321,75 +326,30 @@ class AnalysisApp(QWidget):
         self.add_button.clicked.connect(self.add_more_csvs)
         file_dept_layout.addWidget(self.add_button)
 
-        # Add Set Rating Ranges button
-        self.rating_ranges_btn = QPushButton('Set Rating Ranges')
-        self.rating_ranges_btn.setStyleSheet('font-size: 16px; padding: 6px 12px;')
-        self.rating_ranges_btn.setFixedHeight(28)
-        self.rating_ranges_btn.clicked.connect(self.set_rating_ranges)
-        file_dept_layout.addWidget(self.rating_ranges_btn)
-
-        # Add Save/Load Project buttons
-        self.save_project_btn = QPushButton('Save Project')
-        self.save_project_btn.setStyleSheet('font-size: 16px; padding: 6px 12px;')
-        self.save_project_btn.setFixedHeight(28)
-        self.save_project_btn.clicked.connect(self.save_project)
-        file_dept_layout.addWidget(self.save_project_btn)
-        self.load_project_btn = QPushButton('Load Project')
-        self.load_project_btn.setStyleSheet('font-size: 16px; padding: 6px 12px;')
-        self.load_project_btn.setFixedHeight(28)
-        self.load_project_btn.clicked.connect(self.load_project)
-        file_dept_layout.addWidget(self.load_project_btn)
-
-        # Add Export to PDF button
-        self.export_pdf_btn = QPushButton('Export to PDF')
-        self.export_pdf_btn.setStyleSheet('font-size: 16px; padding: 6px 12px;')
-        self.export_pdf_btn.setFixedHeight(28)
-        self.export_pdf_btn.clicked.connect(self.export_to_pdf)
-        file_dept_layout.addWidget(self.export_pdf_btn)
-
-        # Add Dataset selection combo box
-        dataset_label = QLabel('Select Dataset:')
-        dataset_label.setStyleSheet('font-size: 18px; padding: 4px 8px;')
-        file_dept_layout.addWidget(dataset_label)
-        self.dataset_combo = QComboBox()
-        self.dataset_combo.setStyleSheet('font-size: 18px; min-width: 120px; padding: 6px 14px;')
-        self.dataset_combo.currentIndexChanged.connect(self.on_dataset_change)
-        self.dataset_combo.setEnabled(False)
-        self.dataset_combo.setFixedHeight(32)
-        file_dept_layout.addWidget(self.dataset_combo)
-
-        # Add Remove Dataset button
-        self.remove_dataset_btn = QPushButton('Remove Dataset')
-        self.remove_dataset_btn.setStyleSheet('font-size: 16px; padding: 6px 12px; background: #e74c3c; color: white;')
-        self.remove_dataset_btn.setFixedHeight(28)
-        self.remove_dataset_btn.clicked.connect(self.remove_selected_dataset)
-        file_dept_layout.addWidget(self.remove_dataset_btn)
-
-        # Add Set Rating Ranges button
-        self.rating_ranges_btn = QPushButton('Set Rating Ranges')
-        self.rating_ranges_btn.setStyleSheet('font-size: 16px; padding: 6px 12px;')
-        self.rating_ranges_btn.setFixedHeight(28)
-        self.rating_ranges_btn.clicked.connect(self.set_rating_ranges)
-        file_dept_layout.addWidget(self.rating_ranges_btn)
-
-        # Add Save/Load Project buttons
-        self.save_project_btn = QPushButton('Save Project')
-        self.save_project_btn.setStyleSheet('font-size: 16px; padding: 6px 12px;')
-        self.save_project_btn.setFixedHeight(28)
-        self.save_project_btn.clicked.connect(self.save_project)
-        file_dept_layout.addWidget(self.save_project_btn)
-        self.load_project_btn = QPushButton('Load Project')
-        self.load_project_btn.setStyleSheet('font-size: 16px; padding: 6px 12px;')
-        self.load_project_btn.setFixedHeight(28)
-        self.load_project_btn.clicked.connect(self.load_project)
-        file_dept_layout.addWidget(self.load_project_btn)
-
-        # Add Export to PDF button
-        self.export_pdf_btn = QPushButton('Export to PDF')
-        self.export_pdf_btn.setStyleSheet('font-size: 16px; padding: 6px 12px;')
-        self.export_pdf_btn.setFixedHeight(28)
-        self.export_pdf_btn.clicked.connect(self.export_to_pdf)
-        file_dept_layout.addWidget(self.export_pdf_btn)
+        # Add More Actions dropdown (QToolButton with QMenu)
+        self.more_actions_btn = QToolButton()
+        self.more_actions_btn.setText('More Actions')
+        self.more_actions_btn.setPopupMode(QToolButton.InstantPopup)
+        self.more_actions_menu = QMenu(self)
+        # Add actions
+        action_save = QAction('Save Project', self)
+        action_save.triggered.connect(self.save_project)
+        self.more_actions_menu.addAction(action_save)
+        action_load = QAction('Load Project', self)
+        action_load.triggered.connect(self.load_project)
+        self.more_actions_menu.addAction(action_load)
+        action_export = QAction('Export to PDF', self)
+        action_export.triggered.connect(self.export_to_pdf)
+        self.more_actions_menu.addAction(action_export)
+        action_rating = QAction('Set Rating Ranges', self)
+        action_rating.triggered.connect(self.set_rating_ranges)
+        self.more_actions_menu.addAction(action_rating)
+        action_remove = QAction('Remove Dataset', self)
+        action_remove.triggered.connect(self.remove_selected_dataset)
+        self.more_actions_menu.addAction(action_remove)
+        self.more_actions_btn.setMenu(self.more_actions_menu)
+        self.more_actions_btn.setStyleSheet('font-size: 14px; padding: 4px 10px;')
+        file_dept_layout.addWidget(self.more_actions_btn)
 
         # Add Dataset selection combo box
         dataset_label = QLabel('Select Dataset:')
@@ -445,10 +405,12 @@ class AnalysisApp(QWidget):
         self.arm_layout = QHBoxLayout()  # Changed to HBox for two columns
         self.arm_layout.setContentsMargins(0, 0, 0, 0)
         self.arm_layout.setSpacing(16)
-        self.arm_figure = Figure(dpi=150)
+        self.arm_figure = Figure(dpi=150, constrained_layout=True)
         self.arm_canvas = FigureCanvas(self.arm_figure)
-        self.arm_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.arm_canvas.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         self.arm_canvas.setMinimumHeight(120)
+        self.arm_canvas.setMaximumWidth(700)
+        self.arm_canvas.setMaximumHeight(600)
         self.arm_layout.addWidget(self.arm_canvas, 2)
         # Add ARM analysis text area
         self.arm_analysis_text = QTextEdit()
@@ -492,13 +454,46 @@ class AnalysisApp(QWidget):
         self.desc_table.setStyleSheet('font-size: 14px;')
         self.desc_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.desc_table.setMinimumWidth(400)
+        self.desc_table.setMaximumWidth(420)
+        # Histogram plot (center)
+        self.desc_hist_figure = Figure(dpi=150)
+        self.desc_hist_canvas = FigureCanvas(self.desc_hist_figure)
+        self.desc_hist_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.desc_hist_canvas.setMinimumHeight(120)
+        # Make histogram scrollable with improved UI
+        self.desc_hist_scroll = QScrollArea()
+        self.desc_hist_scroll.setWidgetResizable(True)
+        self.desc_hist_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.desc_hist_scroll.setStyleSheet('''
+            QScrollArea {
+                background: #fff;
+                border: 1.5px solid #d0d7de;
+                border-radius: 10px;
+                padding: 12px 8px 12px 8px;
+            }
+        ''')
+        self.desc_hist_scroll.setWidget(self.desc_hist_canvas)
+        # Add a title label above the histogram area
+        self.desc_hist_col = QVBoxLayout()
+        self.desc_hist_col.setContentsMargins(0, 0, 0, 0)
+        self.desc_hist_col.setSpacing(4)
+        self.desc_hist_title = QLabel('Feature Histograms')
+        self.desc_hist_title.setStyleSheet('font-size: 16px; font-weight: bold; color: #2563eb; padding-bottom: 4px;')
+        self.desc_hist_col.addWidget(self.desc_hist_title)
+        self.desc_hist_col.addWidget(self.desc_hist_scroll)
         # Text area for Groq AI analysis
         self.desc_text = QTextEdit()
         self.desc_text.setReadOnly(True)
         self.desc_text.setStyleSheet('font-size: 14px; padding: 8px;')
         self.desc_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.desc_text.setMinimumWidth(320)
+        self.desc_text.setMaximumWidth(600)
+        # Add widgets to layout
         self.desc_layout.addWidget(self.desc_table, 2)
-        self.desc_layout.addWidget(self.desc_text, 1)
+        hist_col_widget = QWidget()
+        hist_col_widget.setLayout(self.desc_hist_col)
+        self.desc_layout.addWidget(hist_col_widget, 2)
+        self.desc_layout.addWidget(self.desc_text, 2)
         self.desc_tab.setLayout(self.desc_layout)
         self.tabs.addTab(self.desc_tab, "Descriptive Analysis")
 
@@ -515,19 +510,6 @@ class AnalysisApp(QWidget):
         self.recommend_layout.addWidget(self.recommend_text)
         self.recommend_tab.setLayout(self.recommend_layout)
         self.tabs.addTab(self.recommend_tab, "Recommendations")
-
-        # --- Histograms Tab ---
-        self.hist_tab = QWidget()
-        self.hist_layout = QVBoxLayout()
-        self.hist_layout.setContentsMargins(0, 0, 0, 0)
-        self.hist_layout.setSpacing(16)
-        self.hist_figure = Figure(dpi=150, constrained_layout=True)
-        self.hist_canvas = FigureCanvas(self.hist_figure)
-        self.hist_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.hist_canvas.setMinimumHeight(120)
-        self.hist_layout.addWidget(self.hist_canvas)
-        self.hist_tab.setLayout(self.hist_layout)
-        self.tabs.addTab(self.hist_tab, "Histograms")
 
         # --- Trends Tab ---
         self.trends_tab = QWidget()
@@ -556,6 +538,14 @@ class AnalysisApp(QWidget):
             'moderately_satisfactory': (0.75, 1.49),
             'satisfactory': (1.50, 2.24),
             'very_satisfactory': (2.25, float('inf'))
+        }
+        # AI analyses cache: {(dataset, department): text}
+        self.ai_analyses = {
+            'cluster': {},
+            'arm': {},
+            'desc': {},
+            'recommend': {},
+            'trend': {}
         }
         # For all QTextEdit widgets, ensure word wrap and max width
         self.desc_text.setLineWrapMode(QTextEdit.WidgetWidth)
@@ -645,6 +635,9 @@ class AnalysisApp(QWidget):
             df = self.df_all[self.df_all['department_name'] == department].copy()
         else:
             df = self.df_all.copy()
+        dataset_key = self.current_dataset
+        dept_key = department if department is not None else 'All Departments'
+        key = (dataset_key, dept_key)
         try:
             # --- CLUSTERING (KMeans) ---
             self.cluster_figure.clear()
@@ -722,16 +715,33 @@ class AnalysisApp(QWidget):
                 kmeans = KMeans(n_clusters=best_k, random_state=42, n_init=10)
                 clusters = kmeans.fit_predict(X_scaled)
                 df['Cluster'] = clusters
-                # PCA for 2D visualization
+                # Cluster Line Plot for clustering visualization
                 if numeric_df.shape[1] >= 2:
-                    pca = PCA(n_components=2)
-                    X_pca = pca.fit_transform(X_scaled)
-                    ax1.scatter(X_pca[:, 0], X_pca[:, 1], c=clusters, cmap='tab10', alpha=0.7, s=36)
-                    ax1.set_xlabel('PCA 1')
-                    ax1.set_ylabel('PCA 2')
-                    ax1.set_title(f'KMeans Clustering (PCA, k={best_k}) - {department}')
+                    ax1.clear()
+                    cluster_centers = kmeans.cluster_centers_
+                    feature_names = list(numeric_df.columns)
+                    x = np.arange(len(feature_names))
+                    for i, center in enumerate(cluster_centers):
+                        ax1.plot(x, center, marker='o', label=f'Cluster {i+1}')
+                    ax1.set_xticks(x)
+                    ax1.set_xticklabels(feature_names, rotation=45, ha='right')
+                    ax1.set_ylabel('Mean Feature Value (Standardized)')
+                    ax1.set_xlabel('Features')
+                    ax1.set_title(f'Cluster Profiles (k={best_k}) - {department}')
+                    ax1.legend(title='Cluster')
+                    # Add grid for readability
+                    ax1.grid(True, linestyle='--', alpha=0.5)
+                    # Add cluster size information
+                    cluster_sizes = np.bincount(clusters)
+                    size_info = "Cluster Sizes:\n"
+                    for i in range(best_k):
+                        size_info += f"Cluster {i+1}: {cluster_sizes[i]} samples\n"
+                    ax1.text(0.98, 0.98, size_info, transform=ax1.transAxes,
+                            verticalalignment='top', horizontalalignment='right',
+                            bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8),
+                            fontsize=8)
                 else:
-                    ax1.text(0.5, 0.5, 'Not enough numeric features for PCA plot',
+                    ax1.text(0.5, 0.5, 'Not enough numeric features for clustering visualization',
                              ha='center', va='center', fontsize=24)
                     ax1.set_axis_off()
                 # --- Groq AI Cluster Interpretation ---
@@ -747,7 +757,11 @@ class AnalysisApp(QWidget):
                     f"Here are the cluster centers (feature means for each cluster):\n" + '\n\n'.join(cluster_summary) +
                     f"\n\nInterpret what each cluster represents in plain language. Give each group a short descriptive label and summarize the main characteristics. The value of k (number of clusters) was chosen as {best_k} using the elbow and silhouette methods."
                 )
-                ai_cluster_interpret = self.call_groq_ai(cluster_prompt)
+                if key in self.ai_analyses['cluster']:
+                    ai_cluster_interpret = self.ai_analyses['cluster'][key]
+                else:
+                    ai_cluster_interpret = self.call_groq_ai(cluster_prompt)
+                    self.ai_analyses['cluster'][key] = ai_cluster_interpret
                 self.cluster_interpret_text.setPlainText(ai_cluster_interpret)
             self.cluster_figure.tight_layout()
             self.cluster_canvas.draw()
@@ -817,9 +831,13 @@ class AnalysisApp(QWidget):
                     f"Department: {department}\n"
                     f"The following association rules were discovered (antecedent => consequent):\n"
                     f"{rules_text}\n\n"
-                    "Analyze these rules. What are the most important or interesting patterns? What strengths or weaknesses do they reveal? Provide actionable insights."
+                    "Without any boilerplate text. Analyze these rules. What are the most important or interesting patterns? What strengths or weaknesses do they reveal? Provide actionable insights."
                 )
-                ai_arm_analysis = self.call_groq_ai(ai_arm_prompt)
+                if key in self.ai_analyses['arm']:
+                    ai_arm_analysis = self.ai_analyses['arm'][key]
+                else:
+                    ai_arm_analysis = self.call_groq_ai(ai_arm_prompt)
+                    self.ai_analyses['arm'][key] = ai_arm_analysis
                 self.arm_analysis_text.setPlainText(ai_arm_analysis)
             else:
                 self.arm_table.setRowCount(1)
@@ -830,7 +848,6 @@ class AnalysisApp(QWidget):
                 ax2.text(0.5, 0.5, 'No association rules found', ha='center', va='center', fontsize=28)
                 ax2.set_axis_off()
                 self.arm_analysis_text.setPlainText('No association rules found to analyze.')
-            self.arm_figure.tight_layout()
             self.arm_canvas.draw()
 
             # --- DESCRIPTIVE ANALYSIS ---
@@ -898,20 +915,24 @@ class AnalysisApp(QWidget):
                 f"Department: {department}\n"
                 f"Numeric feature summary:\n" + '\n'.join(numeric_summary) +
                 ("\n\nCategorical summary:\n" + '\n'.join(cat_summary) if cat_summary else "") +
-                "\n\nBased on these, provide insights, trends, and actionable recommendations."
+                "\n\nWithout any boilerplate text. Based on these, provide insights, trends, and actionable recommendations."
             )
-            ai_desc_analysis = self.call_groq_ai(prompt)
+            if key in self.ai_analyses['desc']:
+                ai_desc_analysis = self.ai_analyses['desc'][key]
+            else:
+                ai_desc_analysis = self.call_groq_ai(prompt)
+                self.ai_analyses['desc'][key] = ai_desc_analysis
             desc_output.append("\nAI Analysis:\n" + ai_desc_analysis)
             self.desc_text.setPlainText('\n'.join(desc_output))
 
             # --- HISTOGRAM TAB ---
-            self.hist_figure.clear()
+            self.desc_hist_figure.clear()
             if not numeric_df.empty:
-                ncols = 2
+                ncols = 1
                 n_numeric = len(numeric_df.columns)
-                nrows = (n_numeric + ncols - 1) // ncols
-                self.hist_figure.set_size_inches(8, max(3, nrows * 2.2))
-                axes = self.hist_figure.subplots(nrows, ncols, squeeze=False)
+                nrows = n_numeric
+                self.desc_hist_figure.set_size_inches(6, max(3, nrows * 2.2))
+                axes = self.desc_hist_figure.subplots(nrows, ncols, squeeze=False)
                 axes = axes.flatten()
                 for i, col in enumerate(numeric_df.columns):
                     ax = axes[i]
@@ -935,10 +956,15 @@ class AnalysisApp(QWidget):
                     ax.annotate(f"Rating: {rating_label}", xy=(0.5, 0.92), xycoords='axes fraction', ha='center', fontsize=10, color='#2563eb', fontweight='bold')
                 # Hide unused subplots
                 for j in range(i+1, len(axes)):
-                    self.hist_figure.delaxes(axes[j])
+                    self.desc_hist_figure.delaxes(axes[j])
+                # Dynamically set minimum height for the canvas so scroll area works and avoids zero size
+                self.desc_hist_canvas.setMinimumHeight(140 * nrows)
+                self.desc_hist_canvas.setMinimumWidth(600)
+                self.desc_hist_canvas.setMaximumWidth(700)
+                self.desc_hist_canvas.setMaximumHeight(600)
             else:
-                self.hist_figure.text(0.5, 0.5, 'No numeric columns to plot.', ha='center', va='center', fontsize=28)
-            self.hist_canvas.draw()
+                self.desc_hist_figure.text(0.5, 0.5, 'No numeric columns to plot.', ha='center', va='center', fontsize=28)
+            self.desc_hist_canvas.draw()
 
             # --- RECOMMENDATIONS TAB ---
             self.update_recommendations_tab()
@@ -954,18 +980,14 @@ class AnalysisApp(QWidget):
             self.arm_table.setRowCount(1)
             self.arm_table.setSpan(0, 0, 1, 5)
             self.arm_table.setItem(0, 0, QTableWidgetItem(f"Error: {e}"))
-            self.arm_figure.clear()
             self.arm_canvas.draw()
             self.desc_text.setPlainText(f"Error: {e}")
-            self.hist_figure.clear()
-            self.hist_canvas.draw()
+            self.desc_hist_figure.clear()
+            self.desc_hist_canvas.draw()
             # Optionally, clear the ARM plot and show error text on the plot
             ax2 = self.arm_figure.add_subplot(111)
             ax2.text(0.5, 0.5, f'Error: {e}', ha='center', va='center', fontsize=24, color='red')
             ax2.set_axis_off()
-            self.arm_figure.tight_layout()
-            self.arm_canvas.draw()
-            self.recommend_text.setPlainText(f"Error: {e}")
 
     def update_recommendations_tab(self):
         # Gather feature means, ratings, and department
@@ -976,14 +998,20 @@ class AnalysisApp(QWidget):
             rating = self.desc_table.item(row, 2).text()  # Max rating
             features.append(f"{feature}: mean={mean}, max_rating={rating}")
         department = self.dept_combo.currentText() if self.dept_combo.isEnabled() else 'All Departments'
+        dataset_key = self.current_dataset
+        key = (dataset_key, department)
         prompt = (
             f"Department: {department}\n"
             f"Feature summary (mean scores and maximum possible rating):\n" + '\n'.join(features) +
             "\n\nNote: Each feature is rated on a scale from 0 to the maximum rating shown. "
-            "For example, if max_rating=3.00, then scores can range from 0 to 3.00.\n\n"
+            "For` example, if max_rating=3.00, then scores can range from 0 to 3.00`.\n\n"
             "Based on these scores, give recommendations for improvement, strengths to maintain, and any actionable insights."
         )
-        ai_response = self.call_groq_ai(prompt)
+        if key in self.ai_analyses['recommend']:
+            ai_response = self.ai_analyses['recommend'][key]
+        else:
+            ai_response = self.call_groq_ai(prompt)
+            self.ai_analyses['recommend'][key] = ai_response
         self.recommend_text.setPlainText(ai_response)
 
     def call_groq_ai(self, prompt):
@@ -1070,7 +1098,14 @@ class AnalysisApp(QWidget):
             "Identify which features are improving, declining, or stable, and provide actionable insights.\n" +
             '\n'.join(summary_lines)
         )
-        ai_trend_analysis = self.call_groq_ai(trend_prompt)
+        dataset_key = self.current_dataset
+        department = self.dept_combo.currentText() if self.dept_combo.isEnabled() else 'All Departments'
+        key = (dataset_key, department)
+        if key in self.ai_analyses['trend']:
+            ai_trend_analysis = self.ai_analyses['trend'][key]
+        else:
+            ai_trend_analysis = self.call_groq_ai(trend_prompt)
+            self.ai_analyses['trend'][key] = ai_trend_analysis
         # Show analysis below the plot
         self.trends_text.setPlainText(ai_trend_analysis)
 
@@ -1078,9 +1113,9 @@ class AnalysisApp(QWidget):
         import pickle
         fname, _ = QFileDialog.getSaveFileName(self, 'Save Project', '', 'Project Files (*.pkl)')
         if fname:
-            # Save both datasets and rating_ranges as a dict
+            # Save both datasets, rating_ranges, and ai_analyses as a dict
             with open(fname, 'wb') as f:
-                pickle.dump({'datasets': self.datasets, 'rating_ranges': self.rating_ranges}, f)
+                pickle.dump({'datasets': self.datasets, 'rating_ranges': self.rating_ranges, 'ai_analyses': self.ai_analyses}, f)
 
     def load_project(self):
         import pickle
@@ -1091,6 +1126,7 @@ class AnalysisApp(QWidget):
                 if isinstance(data, dict) and 'datasets' in data:
                     self.datasets = data['datasets']
                     self.rating_ranges = data.get('rating_ranges', self.rating_ranges)
+                    self.ai_analyses = data.get('ai_analyses', {'cluster': {}, 'arm': {}, 'desc': {}, 'recommend': {}, 'trend': {}})
                 else:
                     self.datasets = data
             if self.datasets:
@@ -1103,6 +1139,20 @@ class AnalysisApp(QWidget):
                 self.dataset_combo.setCurrentIndex(0)
                 self.on_dataset_change()
                 self.update_trends_tab()
+                # After loading, update UI with loaded analyses for current dataset/department
+                dataset_key = self.current_dataset
+                department = self.dept_combo.currentText() if self.dept_combo.isEnabled() else 'All Departments'
+                key = (dataset_key, department)
+                if key in self.ai_analyses['cluster']:
+                    self.cluster_interpret_text.setPlainText(self.ai_analyses['cluster'][key])
+                if key in self.ai_analyses['arm']:
+                    self.arm_analysis_text.setPlainText(self.ai_analyses['arm'][key])
+                if key in self.ai_analyses['desc']:
+                    self.desc_text.setPlainText(self.ai_analyses['desc'][key])
+                if key in self.ai_analyses['recommend']:
+                    self.recommend_text.setPlainText(self.ai_analyses['recommend'][key])
+                if key in self.ai_analyses['trend']:
+                    self.trends_text.setPlainText(self.ai_analyses['trend'][key])
 
     def export_to_pdf(self):
         fname, _ = QFileDialog.getSaveFileName(self, 'Export to PDF', '', 'PDF Files (*.pdf)')
@@ -1268,7 +1318,7 @@ class AnalysisApp(QWidget):
             return data
 
         # Clustering Tab
-        add_fig(self.cluster_figure, 'Clustering (PCA)')
+        add_fig(self.cluster_figure, 'Clustering (Heatmap)')
         # Cluster Interpretation
         add_text(self.cluster_interpret_text.toPlainText(), 'Cluster Interpretation')
         # Elbow & Silhouette Plots (if available)
@@ -1286,10 +1336,6 @@ class AnalysisApp(QWidget):
         # Descriptive Analysis Tab
         add_table(get_desc_table_data(), 'Descriptive Analysis Table')
         add_text(self.desc_text.toPlainText(), 'Descriptive Analysis (Categorical)')
-        # Histograms Tab
-        add_fig(self.hist_figure, 'Histograms')
-        # Recommendations Tab
-        add_text(self.recommend_text.toPlainText(), 'Recommendations')
         # Trends Tab
         add_fig(self.trends_figure, 'Trends')
         add_text(self.trends_text.toPlainText(), 'Trends Analysis')
@@ -1329,8 +1375,8 @@ class AnalysisApp(QWidget):
                     self.arm_table.setRowCount(0)
                     self.desc_table.setRowCount(0)
                     self.desc_text.clear()
-                    self.hist_figure.clear()
-                    self.hist_canvas.draw()
+                    self.desc_hist_figure.clear()
+                    self.desc_hist_canvas.draw()
                     self.recommend_text.clear()
                     self.trends_figure.clear()
                     self.trends_canvas.draw()

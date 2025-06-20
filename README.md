@@ -1,16 +1,19 @@
 # Clustering & Association Rule Mining Analysis App
 
 ## Overview
-This application is a modern PyQt5-based GUI for interactive data analysis, clustering, association rule mining, and AI-powered recommendations. It is designed for CSV datasets with both numeric and categorical data, supporting multi-file loading, department/dataset filtering, and export features.
+This application is a modern PyQt5-based GUI for interactive data analysis, clustering, association rule mining, and AI-powered recommendations. It is designed for CSV datasets with both numeric and categorical data, supporting multi-file loading, department/dataset filtering, export features, and project save/load.
 
 ## Features
 - **Load and combine multiple CSV files**
 - **Department and dataset selection**
 - **Tabs for Clustering, Association Rules (network plot), ARM Results (table), Descriptive Analysis, Histograms, Recommendations, and Trends**
-- **Dynamic feature rating system**
-- **Groq AI integration for recommendations and trend analysis**
-- **Export to PDF, Save/Load project**
-- **Modern, responsive, fullscreen UI**
+- **Dynamic feature rating system with customizable rating ranges**
+- **Groq AI integration for recommendations, descriptive analysis, and trend analysis**
+- **Export to PDF (all plots, tables, and AI analyses)**
+- **Save/Load project state (.pkl file)**
+- **Remove individual datasets from analysis**
+- **Modern, responsive, fullscreen UI with branding/logo support**
+- **Configurable app title, logo, and university name via `.env` file**
 
 ## Technical Details & Math Used
 
@@ -28,13 +31,14 @@ This application is a modern PyQt5-based GUI for interactive data analysis, clus
     s = \frac{b - a}{\max(a, b)}
     \]
     where $a$ is the mean intra-cluster distance, $b$ is the mean nearest-cluster distance.
-  - The app automatically selects k using the highest silhouette score.
+  - The app automatically selects k using the highest silhouette score and shows both plots in a popup.
 - **Preprocessing:**
   - Standard scaling of all numeric columns (`StandardScaler`)
   - PCA (Principal Component Analysis) to 2D for visualization (`sklearn.decomposition.PCA`)
 - **Plot:**
-  - Each point is a row, colored by cluster assignment
-  - Axes: PCA 1, PCA 2
+  - If enough numeric features: line plot of cluster centers (feature profiles)
+  - Otherwise: PCA scatter plot
+  - Cluster sizes are annotated
 
 ### Principal Component Analysis (PCA)
 - **Purpose:** Reduce dimensionality for visualization.
@@ -43,7 +47,7 @@ This application is a modern PyQt5-based GUI for interactive data analysis, clus
 ### Association Rule Mining (Apriori)
 - **Preprocessing:**
   - Categorical columns: fill NaNs, lowercase, strip, rare values replaced with 'other'
-  - Numeric columns: binned into 3 quantiles (low, medium, high)
+  - Numeric columns: binned into 3 quantiles (low, medium, high) and added as categorical features
   - One-hot encoding (`pd.get_dummies`)
 - **Algorithm:**
   - **Apriori:** Finds frequent itemsets with minimum support.
@@ -63,15 +67,19 @@ This application is a modern PyQt5-based GUI for interactive data analysis, clus
 - **Plot:**
   - Nodes: items (feature=value)
   - Edges: rules (A→B), width by lift
+- **ARM Results Tab:**
+  - Table of discovered rules (antecedents, consequents, support, confidence, lift)
+  - AI-powered analysis of rules
 
 ### Descriptive Analysis
 - **Numeric summary:** min, max, mean, median, std, skew/shape for each numeric column
 - **Categorical summary:** value counts for each categorical column
 - **AI Analysis:** Groq AI interprets the stats and provides recommendations
-
-### Histograms
-- **All numeric columns shown**
-- **20 bins per histogram**
+- **Histograms:**
+  - All numeric columns shown
+  - 20 bins per histogram
+  - Scrollable area with dynamic height
+  - Each feature's mean is rated using customizable rating ranges
 
 ### Recommendations & Trends
 - **Groq AI integration:**
@@ -86,6 +94,16 @@ This application is a modern PyQt5-based GUI for interactive data analysis, clus
 - User selects dataset/department → Filters data for analysis
 - Each tab updates based on current selection
 - All analysis is performed in-memory using pandas, sklearn, mlxtend, and matplotlib
+- Project state (datasets, AI analyses, rating ranges) can be saved/loaded as a `.pkl` file
+
+## Configuration
+- App title, logo, and university name can be customized via a `.env` file in the app directory:
+  ```env
+  LOGO_PATH=spup-logo.png
+  UNIVERSITY_NAME=St. Paul University Philippines
+  APP_TITLE=Event Feedback Analysis
+  ```
+- If `.env` does not exist, it will be created with defaults on first run.
 
 ## Requirements
 - Python 3.7+
@@ -97,22 +115,26 @@ This application is a modern PyQt5-based GUI for interactive data analysis, clus
 - mlxtend
 - reportlab (for PDF export)
 - groq (for AI recommendations)
+- python-dotenv (for configuration)
 
 ## How to Run
 1. Install requirements:
    ```bash
-   pip install pyqt5 pandas scikit-learn matplotlib networkx mlxtend reportlab groq
+   pip install pyqt5 pandas scikit-learn matplotlib networkx mlxtend reportlab groq python-dotenv
    ```
-2. Run the script:
+2. (Optional) Place your logo and set up `.env` for branding.
+3. Run the script:
    ```bash
    python analysis-script.py
    ```
-3. Use the UI to load data, analyze, and export results.
+4. Use the UI to load data, analyze, and export results. Use the **More Actions** menu for project save/load, PDF export, rating range customization, and dataset removal.
 
 ## Notes
 - The app is designed for fullscreen use, but adapts to your screen size.
 - All data is processed locally except for Groq AI calls (which require an API key).
-- Project save/load uses Python pickle format.
+- Project save/load uses Python pickle format (`.pkl`).
+- Error messages are shown in the UI if analysis fails.
+- AI analyses are cached per dataset/department for efficiency.
 
 ---
 
