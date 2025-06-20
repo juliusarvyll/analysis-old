@@ -3,6 +3,38 @@
 ## Overview
 This application is a modern PyQt5-based GUI for interactive data analysis, clustering, association rule mining, and AI-powered recommendations. It is designed for CSV datasets with both numeric and categorical data, supporting multi-file loading, department/dataset filtering, export features, and project save/load.
 
+## Screenshots
+
+Below are example screenshots of the application's main analysis and visualization features. Each plot or table is explained for clarity.
+
+### Clustering Plot
+![Clustering Plot](screenshots/cluster%20plot.png)
+*Shows the result of KMeans clustering. Each line represents a cluster's feature profile, or a PCA scatter plot if there are few features. Cluster sizes are annotated. Useful for visualizing groupings in your data.*
+
+### Elbow Method & Silhouette Score
+![Elbow Method & Silhouette Score](screenshots/elbow%20method%20silhoutte%20score.png)
+*Displays the Elbow Method (inertia vs. k) and Silhouette Score plots. These help determine the optimal number of clusters for KMeans. The app automatically selects the best k using the highest silhouette score.*
+
+### Association Rule Mining (ARM) Plot
+![ARM Plot](screenshots/arm%20plot.png)
+*Visualizes discovered association rules as a network. Nodes represent items (feature=value), and edges represent rules (A→B), with edge width indicating rule strength (lift). Useful for exploring relationships between features.*
+
+### ARM Results Table
+![ARM Results](screenshots/arm%20results.png)
+*Tabular view of discovered association rules, showing antecedents, consequents, support, confidence, and lift. Includes AI-powered analysis of the rules.*
+
+### Descriptive Histogram
+![Descriptive Histogram](screenshots/descriptive%20histogram.png)
+*Shows histograms for all numeric features, with 20 bins each. Feature means are rated using customizable ranges. Useful for understanding the distribution and central tendency of each feature.*
+
+### Recommendations
+![Recommendations](screenshots/recom.png)
+*Displays AI-generated recommendations based on feature means, ratings, and department. Helps users interpret the data and take action.*
+
+### Trends Plot
+![Trends Plot](screenshots/trends%20plot.png)
+*Plots feature means across years (extracted from dataset filenames), with AI-powered trend analysis and insights. Useful for identifying changes and patterns over time.*
+
 ## Features
 - **Load and combine multiple CSV files**
 - **Department and dataset selection**
