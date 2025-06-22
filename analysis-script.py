@@ -407,16 +407,17 @@ class AnalysisApp(QWidget):
         self.arm_layout.setSpacing(16)
         self.arm_figure = Figure(dpi=150, constrained_layout=True)
         self.arm_canvas = FigureCanvas(self.arm_figure)
-        self.arm_canvas.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        # Make ARM plot fit its container
+        self.arm_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.arm_canvas.setMinimumHeight(120)
-        self.arm_canvas.setMaximumWidth(700)
-        self.arm_canvas.setMaximumHeight(600)
-        self.arm_layout.addWidget(self.arm_canvas, 2)
-        # Add ARM analysis text area
+        # Remove max width/height restrictions
+        # Add ARM analysis text area (smaller)
         self.arm_analysis_text = QTextEdit()
         self.arm_analysis_text.setReadOnly(True)
-        self.arm_analysis_text.setStyleSheet('font-size: 14px; padding: 8px;')
+        self.arm_analysis_text.setStyleSheet('font-size: 12px; padding: 6px;')
+        # Use full height of container
         self.arm_analysis_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.arm_layout.addWidget(self.arm_canvas, 2)
         self.arm_layout.addWidget(self.arm_analysis_text, 1)
         self.arm_tab.setLayout(self.arm_layout)
         self.tabs.addTab(self.arm_tab, "Association Rules")
@@ -558,8 +559,6 @@ class AnalysisApp(QWidget):
     def open_csvs(self):
         file_paths, _ = QFileDialog.getOpenFileNames(self, 'Open CSV(s)', '', 'CSV Files (*.csv)')
         if file_paths:
-            self.label.setText('Loaded files:\n' + '\n'.join(file_paths))
-            # Read and store all CSVs
             self.datasets = {}
             for fp in file_paths:
                 df = pd.read_csv(fp)
