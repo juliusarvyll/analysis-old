@@ -347,6 +347,10 @@ class AnalysisApp(QWidget):
         action_remove = QAction('Remove Dataset', self)
         action_remove.triggered.connect(self.remove_selected_dataset)
         self.more_actions_menu.addAction(action_remove)
+        # Add Edit Branding action
+        action_branding = QAction('Edit Branding', self)
+        action_branding.triggered.connect(self.edit_branding)
+        self.more_actions_menu.addAction(action_branding)
         self.more_actions_btn.setMenu(self.more_actions_menu)
         self.more_actions_btn.setStyleSheet('font-size: 14px; padding: 4px 10px;')
         file_dept_layout.addWidget(self.more_actions_btn)
@@ -1380,6 +1384,75 @@ class AnalysisApp(QWidget):
                     self.trends_figure.clear()
                     self.trends_canvas.draw()
                     self.trends_text.clear()
+
+    def edit_branding(self):
+        class BrandingDialog(QDialog):
+            def __init__(self, logo_path, app_title, parent=None):
+                super().__init__(parent)
+                self.setWindowTitle('Edit Branding')
+                self.setMinimumWidth(400)
+                layout = QFormLayout(self)
+                # Logo selector
+                self.logo_path_edit = QLineEdit(logo_path)
+                self.logo_path_edit.setReadOnly(True)
+                self.logo_btn = QPushButton('Choose Logo Image')
+                self.logo_btn.clicked.connect(self.choose_logo)
+                logo_layout = QHBoxLayout()
+                logo_layout.addWidget(self.logo_path_edit)
+                logo_layout.addWidget(self.logo_btn)
+                layout.addRow(QLabel('Logo Image:'), logo_layout)
+                # App title
+                self.title_edit = QLineEdit(app_title)
+                layout.addRow(QLabel('App Title:'), self.title_edit)
+                # Dialog buttons
+                self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                self.button_box.accepted.connect(self.accept)
+                self.button_box.rejected.connect(self.reject)
+                layout.addWidget(self.button_box)
+            def choose_logo(self):
+                file_path, _ = QFileDialog.getOpenFileName(self, 'Select Logo Image', '', 'Images (*.png *.jpg *.jpeg *.bmp *.gif)')
+                if file_path:
+                    self.logo_path_edit.setText(file_path)
+            def get_values(self):
+                return self.logo_path_edit.text(), self.title_edit.text()
+        # Show dialog
+        dlg = BrandingDialog(self.logo_path, self.app_title, self)
+        if dlg.exec_():
+            new_logo, new_title = dlg.get_values()
+            # Save to .env
+            app_path = get_app_path()
+            env_path = os.path.join(app_path, '.env')
+            # Read current .env
+            env_lines = []
+            if os.path.exists(env_path):
+                with open(env_path, 'r') as f:
+                    env_lines = f.readlines()
+            env_dict = {}
+            for line in env_lines:
+                if '=' in line:
+                    k, v = line.strip().split('=', 1)
+                    env_dict[k] = v
+            env_dict['LOGO_PATH'] = new_logo
+            env_dict['APP_TITLE'] = new_title
+            with open(env_path, 'w') as f:
+                for k, v in env_dict.items():
+                    f.write(f'{k}={v}\n')
+            # Update UI
+            self.logo_path = new_logo
+            self.app_title = new_title
+            # Update logo label
+            if self.logo_path and os.path.exists(self.logo_path):
+                pixmap = QPixmap(self.logo_path)
+                pixmap = pixmap.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self.logo_label.setPixmap(pixmap)
+                self.logo_label.setFixedSize(90, 90)
+                self.logo_label.setText('')
+            else:
+                self.logo_label.setPixmap(QPixmap())
+                self.logo_label.setText('LOGO')
+            # Update app title label
+            self.tabs.parentWidget().findChildren(QLabel)[1].setText(self.university_name)
+            self.tabs.parentWidget().findChildren(QLabel)[2].setText(self.app_title)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
