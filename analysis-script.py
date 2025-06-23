@@ -271,16 +271,34 @@ class AnalysisApp(QWidget):
         # --- Top bar: Logo, Spacer, Exit Button ---
         top_bar = QHBoxLayout()
         self.logo_label = QLabel()
+        self.logo_label.setAlignment(Qt.AlignCenter)
+        self.logo_label.setFixedSize(90, 90)
+        self.logo_label.setStyleSheet('background: transparent;')
         if self.logo_path and os.path.exists(self.logo_path):
             pixmap = QPixmap(self.logo_path)
+            # Pad the pixmap to square if needed
+            w, h = pixmap.width(), pixmap.height()
+            if w != h:
+                side = max(w, h)
+                square = QPixmap(side, side)
+                square.fill(Qt.transparent)
+                painter = None
+                try:
+                    from PyQt5.QtGui import QPainter
+                    painter = QPainter(square)
+                    x = (side - w) // 2
+                    y = (side - h) // 2
+                    painter.drawPixmap(x, y, pixmap)
+                finally:
+                    if painter is not None:
+                        painter.end()
+                pixmap = square
             pixmap = pixmap.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.logo_label.setPixmap(pixmap)
-            self.logo_label.setFixedSize(90, 90)
         else:
             self.logo_label.setText('LOGO')
-            self.logo_label.setStyleSheet('font-size: 28px; font-weight: bold; color: #3366cc; padding: 4px 12px;')
+            self.logo_label.setStyleSheet('font-size: 28px; font-weight: bold; color: #3366cc; padding: 4px 12px; background: transparent;')
             self.logo_label.setFixedHeight(48)
-        self.logo_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         top_bar.addWidget(self.logo_label)
 
         # Add university and app title text next to logo
@@ -1387,7 +1405,7 @@ class AnalysisApp(QWidget):
 
     def edit_branding(self):
         class BrandingDialog(QDialog):
-            def __init__(self, logo_path, app_title, parent=None):
+            def __init__(self, logo_path, university_name, app_title, parent=None):
                 super().__init__(parent)
                 self.setWindowTitle('Edit Branding')
                 self.setMinimumWidth(400)
@@ -1401,6 +1419,9 @@ class AnalysisApp(QWidget):
                 logo_layout.addWidget(self.logo_path_edit)
                 logo_layout.addWidget(self.logo_btn)
                 layout.addRow(QLabel('Logo Image:'), logo_layout)
+                # University name
+                self.university_edit = QLineEdit(university_name)
+                layout.addRow(QLabel('University Name:'), self.university_edit)
                 # App title
                 self.title_edit = QLineEdit(app_title)
                 layout.addRow(QLabel('App Title:'), self.title_edit)
@@ -1414,11 +1435,11 @@ class AnalysisApp(QWidget):
                 if file_path:
                     self.logo_path_edit.setText(file_path)
             def get_values(self):
-                return self.logo_path_edit.text(), self.title_edit.text()
+                return self.logo_path_edit.text(), self.university_edit.text(), self.title_edit.text()
         # Show dialog
-        dlg = BrandingDialog(self.logo_path, self.app_title, self)
+        dlg = BrandingDialog(self.logo_path, self.university_name, self.app_title, self)
         if dlg.exec_():
-            new_logo, new_title = dlg.get_values()
+            new_logo, new_university, new_title = dlg.get_values()
             # Save to .env
             app_path = get_app_path()
             env_path = os.path.join(app_path, '.env')
@@ -1433,26 +1454,49 @@ class AnalysisApp(QWidget):
                     k, v = line.strip().split('=', 1)
                     env_dict[k] = v
             env_dict['LOGO_PATH'] = new_logo
+            env_dict['UNIVERSITY_NAME'] = new_university
             env_dict['APP_TITLE'] = new_title
             with open(env_path, 'w') as f:
                 for k, v in env_dict.items():
                     f.write(f'{k}={v}\n')
             # Update UI
             self.logo_path = new_logo
+            self.university_name = new_university
             self.app_title = new_title
             # Update logo label
             if self.logo_path and os.path.exists(self.logo_path):
                 pixmap = QPixmap(self.logo_path)
+                # Pad the pixmap to square if needed
+                w, h = pixmap.width(), pixmap.height()
+                if w != h:
+                    side = max(w, h)
+                    square = QPixmap(side, side)
+                    square.fill(Qt.transparent)
+                    painter = None
+                    try:
+                        from PyQt5.QtGui import QPainter
+                        painter = QPainter(square)
+                        x = (side - w) // 2
+                        y = (side - h) // 2
+                        painter.drawPixmap(x, y, pixmap)
+                    finally:
+                        if painter is not None:
+                            painter.end()
+                    pixmap = square
                 pixmap = pixmap.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 self.logo_label.setPixmap(pixmap)
-                self.logo_label.setFixedSize(90, 90)
-                self.logo_label.setText('')
             else:
                 self.logo_label.setPixmap(QPixmap())
                 self.logo_label.setText('LOGO')
-            # Update app title label
-            self.tabs.parentWidget().findChildren(QLabel)[1].setText(self.university_name)
-            self.tabs.parentWidget().findChildren(QLabel)[2].setText(self.app_title)
+            # Update university and app title labels
+            labels = self.tabs.parentWidget().findChildren(QLabel)
+            # Defensive: find the correct labels by text or order
+            for label in labels:
+                if label.text() == self.university_name or label.text() == self.app_title:
+                    continue  # Will update below
+            if len(labels) > 2:
+                labels[1].setText(self.university_name)
+                labels[2].setText(self.app_title)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
