@@ -276,23 +276,23 @@ class AnalysisApp(QWidget):
         self.logo_label.setStyleSheet('background: transparent;')
         if self.logo_path and os.path.exists(self.logo_path):
             pixmap = QPixmap(self.logo_path)
-            # Pad the pixmap to square if needed
+            # Pad the pixmap to square with extra padding
             w, h = pixmap.width(), pixmap.height()
-            if w != h:
-                side = max(w, h)
-                square = QPixmap(side, side)
-                square.fill(Qt.transparent)
-                painter = None
-                try:
-                    from PyQt5.QtGui import QPainter
-                    painter = QPainter(square)
-                    x = (side - w) // 2
-                    y = (side - h) // 2
-                    painter.drawPixmap(x, y, pixmap)
-                finally:
-                    if painter is not None:
-                        painter.end()
-                pixmap = square
+            pad_ratio = 0.15  # 15% padding
+            side = int(max(w, h) * (1 + pad_ratio))
+            square = QPixmap(side, side)
+            square.fill(Qt.transparent)
+            painter = None
+            try:
+                from PyQt5.QtGui import QPainter
+                painter = QPainter(square)
+                x = (side - w) // 2
+                y = (side - h) // 2
+                painter.drawPixmap(x, y, pixmap)
+            finally:
+                if painter is not None:
+                    painter.end()
+            pixmap = square
             pixmap = pixmap.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.logo_label.setPixmap(pixmap)
         else:
@@ -1466,23 +1466,23 @@ class AnalysisApp(QWidget):
             # Update logo label
             if self.logo_path and os.path.exists(self.logo_path):
                 pixmap = QPixmap(self.logo_path)
-                # Pad the pixmap to square if needed
+                # Pad the pixmap to square with extra padding
                 w, h = pixmap.width(), pixmap.height()
-                if w != h:
-                    side = max(w, h)
-                    square = QPixmap(side, side)
-                    square.fill(Qt.transparent)
-                    painter = None
-                    try:
-                        from PyQt5.QtGui import QPainter
-                        painter = QPainter(square)
-                        x = (side - w) // 2
-                        y = (side - h) // 2
-                        painter.drawPixmap(x, y, pixmap)
-                    finally:
-                        if painter is not None:
-                            painter.end()
-                    pixmap = square
+                pad_ratio = 0.15  # 15% padding
+                side = int(max(w, h) * (1 + pad_ratio))
+                square = QPixmap(side, side)
+                square.fill(Qt.transparent)
+                painter = None
+                try:
+                    from PyQt5.QtGui import QPainter
+                    painter = QPainter(square)
+                    x = (side - w) // 2
+                    y = (side - h) // 2
+                    painter.drawPixmap(x, y, pixmap)
+                finally:
+                    if painter is not None:
+                        painter.end()
+                pixmap = square
                 pixmap = pixmap.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 self.logo_label.setPixmap(pixmap)
             else:
