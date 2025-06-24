@@ -333,4 +333,26 @@ Below are screenshots of the application to guide reviewers through the main fea
 
 ---
 
+## Package Purposes in This App
+
+Below is a summary of the main Python packages used in `analysis-script.py` and their roles in the application:
+
+- **PyQt5**: Provides the graphical user interface (GUI) framework for the app, including windows, dialogs, buttons, tabs, and all interactive widgets.
+- **pandas**: Used for loading, cleaning, manipulating, and analyzing tabular data from CSV files.
+- **scikit-learn** (`sklearn`): Supplies machine learning algorithms and utilities, including KMeans clustering, data scaling (`StandardScaler`), PCA (for dimensionality reduction), and silhouette scoring (for cluster quality).
+- **matplotlib**: Handles all plotting and visualization, including cluster profiles, histograms, elbow/silhouette plots, and trends over time.
+- **networkx**: Used to create and visualize association rule networks (nodes and edges representing rules between features).
+- **mlxtend**: Provides the `apriori` algorithm and `association_rules` function for mining frequent itemsets and generating association rules from the data.
+- **reportlab**: Enables exporting the analysis, plots, and tables to a formatted PDF report.
+- **groq**: Connects to the Groq AI API to generate natural language analyses, recommendations, and summaries based on the data and results.
+- **python-dotenv**: Loads configuration and branding information (like logo path, university name, and app title) from a `.env` file.
+- **numpy**: Used for efficient numerical operations, array handling, and calculations throughout the analysis.
+- **collections**: Specifically, `Counter` is used for counting department occurrences and other frequency-based operations.
+- **re**: Regular expressions for extracting years from filenames and other string processing tasks.
+- **os, sys, tempfile, time, pickle**: Standard Python libraries for file handling, system operations, temporary file creation, timing, and saving/loading project state.
+
+These packages work together to provide a seamless workflow from data loading and analysis to visualization, AI-powered interpretation, and export.
+
+---
+
 Feel free to modify the code for your own analysis needs!

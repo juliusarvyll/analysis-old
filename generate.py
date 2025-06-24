@@ -54,8 +54,8 @@ year_configs = {
 }
 
 # ⚙ Rating range
-min_rating = 1
-max_rating = 5
+min_rating = 0
+max_rating = 3
 
 # 🔁 Generate each year's file
 for year, (level, count) in year_configs.items():

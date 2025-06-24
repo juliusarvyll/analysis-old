@@ -23,7 +23,7 @@ import os
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import landscape
-from reportlab.lib.utils import ImageReader
+
 from reportlab.lib import utils
 import tempfile
 from reportlab.platypus import Table, TableStyle
