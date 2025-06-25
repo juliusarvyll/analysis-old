@@ -470,54 +470,36 @@ class AnalysisApp(QWidget):
         self.desc_layout = QHBoxLayout()
         self.desc_layout.setContentsMargins(0, 0, 0, 0)
         self.desc_layout.setSpacing(16)
-        # Table for all numeric stats
+        # Histogram plot (left)
+        self.desc_hist_figure = Figure(dpi=150)
+        self.desc_hist_canvas = FigureCanvas(self.desc_hist_figure)
+        self.desc_hist_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # Table for all numeric stats (middle)
         self.desc_table = QTableWidget()
         self.desc_table.setColumnCount(7)
         self.desc_table.setHorizontalHeaderLabels(['Feature', 'Min', 'Max', 'Mean', 'Median', 'Std', 'Shape'])
         self.desc_table.setStyleSheet('font-size: 14px;')
         self.desc_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.desc_table.setMinimumWidth(400)
-        self.desc_table.setMaximumWidth(420)
-        # Histogram plot (center)
-        self.desc_hist_figure = Figure(dpi=150)
-        self.desc_hist_canvas = FigureCanvas(self.desc_hist_figure)
-        self.desc_hist_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.desc_hist_canvas.setMinimumHeight(120)
-        # Make histogram scrollable with improved UI
-        self.desc_hist_scroll = QScrollArea()
-        self.desc_hist_scroll.setWidgetResizable(True)
-        self.desc_hist_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.desc_hist_scroll.setStyleSheet('''
-            QScrollArea {
-                background: #fff;
-                border: 1.5px solid #d0d7de;
-                border-radius: 10px;
-                padding: 12px 8px 12px 8px;
-            }
-        ''')
-        self.desc_hist_scroll.setWidget(self.desc_hist_canvas)
-        # Add a title label above the histogram area
-        self.desc_hist_col = QVBoxLayout()
-        self.desc_hist_col.setContentsMargins(0, 0, 0, 0)
-        self.desc_hist_col.setSpacing(4)
-        self.desc_hist_title = QLabel('Feature Histograms')
-        self.desc_hist_title.setStyleSheet('font-size: 16px; font-weight: bold; color: #2563eb; padding-bottom: 4px;')
-        self.desc_hist_col.addWidget(self.desc_hist_title)
-        self.desc_hist_col.addWidget(self.desc_hist_scroll)
-        # Text area for Groq AI analysis
+        # Text area for Groq AI analysis (right)
         self.desc_text = QTextEdit()
         self.desc_text.setReadOnly(True)
         self.desc_text.setStyleSheet('font-size: 14px; padding: 8px;')
         self.desc_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.desc_text.setMinimumWidth(320)
-        self.desc_text.setMaximumWidth(600)
-        # Add widgets to layout
-        self.desc_layout.addWidget(self.desc_table, 2)
-        hist_col_widget = QWidget()
-        hist_col_widget.setLayout(self.desc_hist_col)
-        self.desc_layout.addWidget(hist_col_widget, 2)
-        self.desc_layout.addWidget(self.desc_text, 2)
-        self.desc_tab.setLayout(self.desc_layout)
+        # Add widgets to layout: histogram, table, analysis
+        self.desc_layout.addWidget(self.desc_hist_canvas, 1)
+        self.desc_layout.addWidget(self.desc_table, 1)
+        self.desc_layout.addWidget(self.desc_text, 1)
+        # Make the whole layout scrollable horizontally if needed
+        self.desc_scroll = QScrollArea()
+        self.desc_scroll.setWidgetResizable(True)
+        desc_container = QWidget()
+        desc_container.setLayout(self.desc_layout)
+        self.desc_scroll.setWidget(desc_container)
+        desc_tab_layout = QVBoxLayout()
+        desc_tab_layout.setContentsMargins(0, 0, 0, 0)
+        desc_tab_layout.setSpacing(0)
+        desc_tab_layout.addWidget(self.desc_scroll)
+        self.desc_tab.setLayout(desc_tab_layout)
         self.tabs.addTab(self.desc_tab, "Descriptive Analysis")
 
         # --- Recommendations Tab ---
@@ -650,9 +632,10 @@ class AnalysisApp(QWidget):
                 self.analyze_by_department(dept)
 
     def analyze_by_department(self, department):
-        if self.df_all is None:
+        if self.df_all is None or self.df_all.empty:
             return
-        if department is not None and department != 'All Departments':
+        # Defensive: Only filter by department if the column exists
+        if department is not None and department != 'All Departments' and 'department_name' in self.df_all.columns:
             df = self.df_all[self.df_all['department_name'] == department].copy()
         else:
             df = self.df_all.copy()
@@ -839,7 +822,6 @@ class AnalysisApp(QWidget):
                 nx.draw_networkx_nodes(G, pos, ax=ax2, node_size=500, node_color="#7fa7ff")
                 nx.draw_networkx_labels(G, pos, ax=ax2, font_size=10)
                 nx.draw_networkx_edges(G, pos, ax=ax2, arrows=True, arrowstyle='-|>', width=[w*0.6 for w in edge_widths], edge_color="#b0b0ff")
-                ax2.set_title(f'Association Rule Network (edges: rules, width: lift) - {department}', fontsize=28)
                 ax2.axis('off')
                 # --- AI Analysis of Rules ---
                 rule_summaries = []
@@ -941,48 +923,31 @@ class AnalysisApp(QWidget):
             if key in self.ai_analyses['desc']:
                 ai_desc_analysis = self.ai_analyses['desc'][key]
             else:
-                ai_desc_analysis = self.call_groq_ai(prompt)
+                ai_desc_analysis = self.call_groq_ai(prompt, max_tokens=400)
                 self.ai_analyses['desc'][key] = ai_desc_analysis
             desc_output.append("\nAI Analysis:\n" + ai_desc_analysis)
             self.desc_text.setPlainText('\n'.join(desc_output))
 
-            # --- HISTOGRAM TAB ---
+            # --- a (now in Descriptive Analysis tab) ---
             self.desc_hist_figure.clear()
             if not numeric_df.empty:
                 ncols = 1
                 n_numeric = len(numeric_df.columns)
                 nrows = n_numeric
-                self.desc_hist_figure.set_size_inches(6, max(3, nrows * 2.2))
+                self.desc_hist_figure.set_size_inches(5, max(2.2, nrows * 2.2))
                 axes = self.desc_hist_figure.subplots(nrows, ncols, squeeze=False)
                 axes = axes.flatten()
                 for i, col in enumerate(numeric_df.columns):
                     ax = axes[i]
                     data = numeric_df[col].dropna()
-                    ax.hist(data, bins=20, color='#3366cc', alpha=0.8)
-                    mean_val = data.mean()
-                    # Determine rating label for mean (lower exclusive, upper inclusive)
-                    rating_label = None
-                    for label, (low, high) in self.rating_ranges.items():
-                        low_unbounded = (low is None) or (isinstance(low, float) and np.isneginf(low))
-                        high_unbounded = (high is None) or (isinstance(high, float) and np.isposinf(high))
-                        if (low_unbounded or mean_val > low) and (high_unbounded or mean_val <= high):
-                            rating_label = label
-                            break
-                    if rating_label is None:
-                        rating_label = 'Unrated'
-                    ax.set_title(f"{col}", fontsize=12)
-                    ax.set_xlabel('Value', fontsize=10)
-                    ax.set_ylabel('Frequency', fontsize=10)
-                    # Show rating as subtitle
-                    ax.annotate(f"Rating: {rating_label}", xy=(0.5, 0.92), xycoords='axes fraction', ha='center', fontsize=10, color='#2563eb', fontweight='bold')
-                # Hide unused subplots
+                    n_bins = min(40, max(10, int(np.sqrt(len(data)))))
+                    ax.hist(data, bins=n_bins, color='#3366cc', alpha=0.8, edgecolor='black')
+                    ax.set_title(f"{col}", fontsize=13, fontweight='bold')
+                    ax.set_xlabel('Value', fontsize=11)
+                    ax.set_ylabel('Frequency', fontsize=11)
+                    ax.grid(True, linestyle='--', alpha=0.5)
                 for j in range(i+1, len(axes)):
                     self.desc_hist_figure.delaxes(axes[j])
-                # Dynamically set minimum height for the canvas so scroll area works and avoids zero size
-                self.desc_hist_canvas.setMinimumHeight(140 * nrows)
-                self.desc_hist_canvas.setMinimumWidth(600)
-                self.desc_hist_canvas.setMaximumWidth(700)
-                self.desc_hist_canvas.setMaximumHeight(600)
             else:
                 self.desc_hist_figure.text(0.5, 0.5, 'No numeric columns to plot.', ha='center', va='center', fontsize=28)
             self.desc_hist_canvas.draw()
@@ -1035,13 +1000,13 @@ class AnalysisApp(QWidget):
             self.ai_analyses['recommend'][key] = ai_response
         self.recommend_text.setPlainText(ai_response)
 
-    def call_groq_ai(self, prompt):
+    def call_groq_ai(self, prompt, max_tokens=1024):
         # --- REAL GROQ API CALL ---
         try:
             from groq import Groq
         except ImportError:
             return "groq package not installed. Please install with 'pip install groq'."
-        client = Groq(api_key="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")
+        client = Groq(api_key="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")
         try:
             completion = client.chat.completions.create(
                 model="meta-llama/llama-4-scout-17b-16e-instruct",
@@ -1052,7 +1017,7 @@ class AnalysisApp(QWidget):
                     }
                 ],
                 temperature=1,
-                max_completion_tokens=1024,
+                max_completion_tokens=max_tokens,
                 top_p=1,
                 stream=True,
                 stop=None,
@@ -1142,6 +1107,29 @@ class AnalysisApp(QWidget):
         import pickle
         fname, _ = QFileDialog.getOpenFileName(self, 'Load Project', '', 'Project Files (*.pkl)')
         if fname:
+            # Clear all current state before loading new project
+            self.datasets.clear()
+            self.df_all = pd.DataFrame()
+            self.dataset_combo.clear()
+            self.dataset_combo.setEnabled(False)
+            self.dept_combo.clear()
+            self.dept_combo.setEnabled(False)
+            # Clear all analysis tabs
+            self.cluster_figure.clear()
+            self.cluster_canvas.draw()
+            self.cluster_interpret_text.clear()
+            self.arm_figure.clear()
+            self.arm_canvas.draw()
+            self.arm_table.setRowCount(0)
+            self.desc_table.setRowCount(0)
+            self.desc_text.clear()
+            self.desc_hist_figure.clear()
+            self.desc_hist_canvas.draw()
+            self.recommend_text.clear()
+            self.trends_figure.clear()
+            self.trends_canvas.draw()
+            self.trends_text.clear()
+            # Now load the new project
             with open(fname, 'rb') as f:
                 data = pickle.load(f)
                 if isinstance(data, dict) and 'datasets' in data:
@@ -1365,8 +1353,33 @@ class AnalysisApp(QWidget):
 
     def remove_selected_dataset(self):
         selected = self.dataset_combo.currentText()
-        if selected == 'All Datasets' or not self.dataset_combo.isEnabled():
+        if not self.dataset_combo.isEnabled():
             QMessageBox.information(self, 'Remove Dataset', 'Please select a specific dataset to remove.')
+            return
+        if selected == 'All Datasets':
+            reply = QMessageBox.question(self, 'Remove All Datasets', 'Are you sure you want to remove ALL datasets?', QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                self.datasets.clear()
+                self.df_all = pd.DataFrame()
+                self.dataset_combo.clear()
+                self.dataset_combo.setEnabled(False)
+                self.dept_combo.clear()
+                self.dept_combo.setEnabled(False)
+                # Clear all analysis tabs
+                self.cluster_figure.clear()
+                self.cluster_canvas.draw()
+                self.cluster_interpret_text.clear()
+                self.arm_figure.clear()
+                self.arm_canvas.draw()
+                self.arm_table.setRowCount(0)
+                self.desc_table.setRowCount(0)
+                self.desc_text.clear()
+                self.desc_hist_figure.clear()
+                self.desc_hist_canvas.draw()
+                self.recommend_text.clear()
+                self.trends_figure.clear()
+                self.trends_canvas.draw()
+                self.trends_text.clear()
             return
         if selected in self.datasets:
             reply = QMessageBox.question(self, 'Remove Dataset', f"Are you sure you want to remove the dataset:\n{selected}?", QMessageBox.Yes | QMessageBox.No)

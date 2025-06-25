@@ -24,42 +24,44 @@ def generate_csv(filename, headers, target_averages, num_respondents, min_rating
 
 # 📝 Headers
 headers = [
-    "Objectives_Met",
-    "Venue_Rating",
-    "Schedule_Rating",
-    "Allowance_Rating",
-    "Speaker_Rating",
-    "Facilitator_Rating",
-    "Participant_Rating",
+    "Objectives - Contribution",
+    "Objectives - Timeliness",
+    "Objectives - Usefulness",
+    "Objectives - Clarity",
+    "OrgPrep - Planning",
+    "OrgPrep - GroupPrep",
+    "OrgPrep - Time",
+    "OrgPrep - Venue",
+    "OrgPrep - Zest",
+    "Involvement - Enthusiasm",
+    "Involvement - Level",
     "department_name"
 ]
 
 # 🏫 Departments
-departments = ["SITE", "SBAHM", "SOM", "SNAHS", "BEU"]
+departments = ["SAB", "BE", "SIT", "SHS","SAS","SED"]
 
 # 🎯 Target averages per satisfaction level
 levels = {
-    "low":     [1.9, 2.0, 1.8, 2.1, 2.0, 1.7, 1.9],
-    "average": [3.2, 3.3, 3.0, 3.1, 3.4, 3.2, 3.3],
-    "high":    [4.9, 4.8, 4.9, 4.95, 4.85, 4.9, 4.8]
+    "low":     [1.9, 2.0, 1.8, 2.1, 2.0, 1.7, 1.9, 2.0, 1.8, 2.1, 1.9],
+    "average": [3.2, 3.3, 3.0, 3.1, 3.4, 3.2, 3.3, 3.2, 3.1, 3.3, 3.2],
+    "high":    [4.9, 4.8, 4.9, 4.95, 4.85, 4.9, 4.8, 4.9, 4.85, 4.95, 4.9]
 }
 
 # 📅 Year, satisfaction level, and respondent count
 year_configs = {
-    2018: ("low", 830),
-    2019: ("average", 970),
-    2022: ("low", 1340),
+    2022: ("average", 1340),
     2023: ("average", 1263),
     2024: ("high", 1754)
 }
 
 # ⚙ Rating range
-min_rating = 0
-max_rating = 3
+min_rating = 1
+max_rating = 5
 
 # 🔁 Generate each year's file
 for year, (level, count) in year_configs.items():
-    filename = f"cfop_{year}_{level}.csv"
+    filename = f"spuqc_{year}.csv"
     generate_csv(
         filename=filename,
         headers=headers,
