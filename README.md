@@ -337,19 +337,48 @@ Below are screenshots of the application to guide reviewers through the main fea
 
 Below is a summary of the main Python packages used in `analysis-script.py` and their roles in the application:
 
-- **PyQt5**: Provides the graphical user interface (GUI) framework for the app, including windows, dialogs, buttons, tabs, and all interactive widgets.
-- **pandas**: Used for loading, cleaning, manipulating, and analyzing tabular data from CSV files.
-- **scikit-learn** (`sklearn`): Supplies machine learning algorithms and utilities, including KMeans clustering, data scaling (`StandardScaler`), PCA (for dimensionality reduction), and silhouette scoring (for cluster quality).
-- **matplotlib**: Handles all plotting and visualization, including cluster profiles, histograms, elbow/silhouette plots, and trends over time.
-- **networkx**: Used to create and visualize association rule networks (nodes and edges representing rules between features).
-- **mlxtend**: Provides the `apriori` algorithm and `association_rules` function for mining frequent itemsets and generating association rules from the data.
-- **reportlab**: Enables exporting the analysis, plots, and tables to a formatted PDF report.
-- **groq**: Connects to the Groq AI API to generate natural language analyses, recommendations, and summaries based on the data and results.
-- **python-dotenv**: Loads configuration and branding information (like logo path, university name, and app title) from a `.env` file.
-- **numpy**: Used for efficient numerical operations, array handling, and calculations throughout the analysis.
-- **collections**: Specifically, `Counter` is used for counting department occurrences and other frequency-based operations.
-- **re**: Regular expressions for extracting years from filenames and other string processing tasks.
-- **os, sys, tempfile, time, pickle**: Standard Python libraries for file handling, system operations, temporary file creation, timing, and saving/loading project state.
+- `PyQt5`: Provides the graphical user interface (GUI) framework for the app, including windows, dialogs, buttons, tabs, and all interactive widgets.
+    - `QApplication`, `QWidget`, `QVBoxLayout`, `QHBoxLayout`, `QPushButton`, `QTextEdit`, `QFileDialog`, `QLabel`, `QTabWidget`, `QComboBox`, `QSizePolicy`, `QSpacerItem`, `QDialog`, `QFormLayout`, `QLineEdit`, `QDialogButtonBox`, `QTableWidget`, `QTableWidgetItem`, `QMessageBox`, `QScrollArea`, `QInputDialog`, `QToolButton`, `QMenu`, `QAction`, `Qt`, `QPixmap`: Used to build the main window, dialogs, layouts, file pickers, tables, and all interactive UI elements. For example, `QFileDialog` is used to open/save files, `QTableWidget` displays analysis results, and `QTextEdit` shows AI outputs.
+    - `QPainter`: Used for custom logo rendering.
+
+- `pandas`: Used for loading, cleaning, manipulating, and analyzing tabular data from CSV files.
+    - `pd.read_csv`, `pd.concat`, `pd.get_dummies`, `DataFrame.select_dtypes`, `DataFrame.copy`, `DataFrame.value_counts`, `DataFrame.dropna`, `DataFrame.iterrows`, `DataFrame.columns`, `DataFrame.mean`, `DataFrame.median`, `DataFrame.std`, `DataFrame.skew`, `DataFrame.fillna`, `DataFrame.replace`, `DataFrame.empty`, `DataFrame.shape`, `DataFrame.set_index`, `DataFrame.to_string`, `DataFrame.binned`: Handles all data loading, merging, one-hot encoding for ARM, and summary statistics for descriptive analysis.
+
+- `scikit-learn` (`sklearn`): Supplies machine learning algorithms and utilities.
+    - `StandardScaler`: Scales numeric data before clustering.
+    - `KMeans`: Performs clustering on numeric features.
+    - `PCA`: (If used) for dimensionality reduction/visualization.
+    - `silhouette_score`: Used to select the optimal number of clusters (k) by evaluating cluster quality.
+
+- `matplotlib`: Handles all plotting and visualization.
+    - `Figure`, `FigureCanvas`, `pyplot (plt)`, `mpl.rcParams`: Used to create and render plots for clusters, elbow/silhouette, histograms, and trends. `FigureCanvas` embeds plots in the PyQt5 UI.
+
+- `networkx`: Used to create and visualize association rule networks.
+    - `nx.DiGraph`, `nx.spring_layout`, `nx.draw_networkx_nodes`, `nx.draw_networkx_labels`, `nx.draw_networkx_edges`: Builds and draws the network of association rules between features.
+
+- `mlxtend`: Provides the `apriori` algorithm and `association_rules` function for mining frequent itemsets and generating association rules from the data.
+    - `apriori`, `association_rules`: Finds frequent itemsets and generates rules for the ARM tab.
+
+- `reportlab`: Enables exporting the analysis, plots, and tables to a formatted PDF report.
+    - `canvas`, `Table`, `TableStyle`, `colors`, `utils`, `letter`, `landscape`: Used to create PDF pages, add images/plots, format tables, and style the exported report.
+
+- `groq`: Connects to the Groq AI API to generate natural language analyses, recommendations, and summaries based on the data and results.
+    - `Groq`, `client.chat.completions.create`: Sends prompts and receives AI-generated text for cluster interpretation, ARM analysis, descriptive summaries, recommendations, and trends.
+
+- `python-dotenv`: Loads configuration and branding information (like logo path, university name, and app title) from a `.env` file.
+    - `load_dotenv`, `os.getenv`: Reads environment variables for branding and configuration.
+
+- `numpy`: Used for efficient numerical operations, array handling, and calculations throughout the analysis.
+    - `np.arange`, `np.argmax`, `np.bincount`, `np.isneginf`, `np.isposinf`, `np.array`: Used for feature indexing, cluster center calculations, and numeric checks.
+
+- `collections`: Specifically, `Counter` is used for counting department occurrences and other frequency-based operations.
+    - `Counter`: Tallies department frequencies for dropdowns and summaries.
+
+- `re`: Regular expressions for extracting years from filenames and other string processing tasks.
+    - `re.search`, `re.sub`: Extracts year info from filenames and cleans up table headers/values for export.
+
+- `os`, `sys`, `tempfile`, `time`, `pickle`: Standard Python libraries for file handling, system operations, temporary file creation, timing, and saving/loading project state.
+    - `os.path`, `sys.argv`, `tempfile.NamedTemporaryFile`, `time.sleep`, `pickle.dump`, `pickle.load`: Used for file paths, app execution, temporary image storage for PDF export, timing, and project save/load.
 
 These packages work together to provide a seamless workflow from data loading and analysis to visualization, AI-powered interpretation, and export.
 
